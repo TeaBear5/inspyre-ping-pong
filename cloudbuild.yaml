@@ -1,6 +1,18 @@
 # Cloud Build configuration for CI/CD deployment
 # Triggers on push to google-cloud-deployment branch
 
+substitutions:
+  # Set these in Cloud Build trigger, or pass via command line
+  _BACKEND_URL: ''
+  _FRONTEND_URL: ''
+  # Firebase config (optional - leave empty for password-only auth)
+  _FIREBASE_API_KEY: ''
+  _FIREBASE_AUTH_DOMAIN: ''
+  _FIREBASE_PROJECT_ID: ''
+  _FIREBASE_STORAGE_BUCKET: ''
+  _FIREBASE_MESSAGING_SENDER_ID: ''
+  _FIREBASE_APP_ID: ''
+
 steps:
   # 1. Build Backend Image
   - name: 'gcr.io/cloud-builders/docker'
@@ -14,7 +26,7 @@ steps:
     id: 'build-backend'
 
   # 2. Build Frontend Image
-  # We use the _BACKEND_URL variable you set in the Trigger
+  # Pass API URL and optional Firebase config
   - name: 'gcr.io/cloud-builders/docker'
     entrypoint: 'bash'
     args:
@@ -22,6 +34,12 @@ steps:
       - |
         docker build \
           --build-arg VITE_API_URL="${_BACKEND_URL}" \
+          --build-arg VITE_FIREBASE_API_KEY="${_FIREBASE_API_KEY}" \
+          --build-arg VITE_FIREBASE_AUTH_DOMAIN="${_FIREBASE_AUTH_DOMAIN}" \
+          --build-arg VITE_FIREBASE_PROJECT_ID="${_FIREBASE_PROJECT_ID}" \
+          --build-arg VITE_FIREBASE_STORAGE_BUCKET="${_FIREBASE_STORAGE_BUCKET}" \
+          --build-arg VITE_FIREBASE_MESSAGING_SENDER_ID="${_FIREBASE_MESSAGING_SENDER_ID}" \
+          --build-arg VITE_FIREBASE_APP_ID="${_FIREBASE_APP_ID}" \
           -t us-east4-docker.pkg.dev/$PROJECT_ID/inspyre-ping-pong-repo/frontend:$COMMIT_SHA \
           -t us-east4-docker.pkg.dev/$PROJECT_ID/inspyre-ping-pong-repo/frontend:latest \
           ./frontend
@@ -61,7 +79,7 @@ steps:
     waitFor: ['push-backend']
     secretEnv: ['DB_PASSWORD', 'SECRET_KEY']
 
-  # 6. Deploy Backend to Cloud Run
+  # 6. Deploy Backend to Cloud Run (with CORS configured for frontend)
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -78,7 +96,7 @@ steps:
       - '--add-cloudsql-instances'
       - '$PROJECT_ID:us-east4:inspyre-ping-pong-db'
       - '--set-env-vars'
-      - 'DB_HOST=/cloudsql/$PROJECT_ID:us-east4:inspyre-ping-pong-db,DB_NAME=pingpong,DB_USER=django_user,DEBUG=0,ALLOWED_HOSTS=*'
+      - 'DB_HOST=/cloudsql/$PROJECT_ID:us-east4:inspyre-ping-pong-db,DB_NAME=pingpong,DB_USER=django_user,DEBUG=0,ALLOWED_HOSTS=*,CORS_ALLOWED_ORIGINS=${_FRONTEND_URL},CSRF_TRUSTED_ORIGINS=${_FRONTEND_URL}'
       - '--set-secrets'
       - 'DB_PASSWORD=django-db-password:latest,SECRET_KEY=django-secret-key:latest,FIREBASE_CREDENTIALS_JSON=firebase-credentials:latest'
     id: 'deploy-backend'

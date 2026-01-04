@@ -171,18 +171,56 @@ REST_FRAMEWORK = {
     ],
 }
 
-# CORS settings
-_cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",  # Vue dev server
+# CORS settings - parse from environment variable (comma-separated)
+def parse_cors_origins(env_var_name, defaults=None):
+    """Parse comma-separated origins from env var, removing trailing slashes"""
+    if defaults is None:
+        defaults = []
+    env_value = os.environ.get(env_var_name, '')
+    if env_value:
+        # Split by comma, strip whitespace and trailing slashes
+        parsed = [origin.strip().rstrip('/') for origin in env_value.split(',') if origin.strip()]
+        return defaults + parsed
+    return defaults
+
+# Default origins for local development
+_default_cors_origins = [
+    "http://localhost:5173",
     "http://localhost:5174",
     "http://localhost:3000",
-    "http://localhost:8080",  # Docker dev frontend
+    "http://localhost:8080",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
-] + ([origin.strip() for origin in _cors_origins.split(',') if origin.strip()] if _cors_origins else [])
+]
+
+CORS_ALLOWED_ORIGINS = parse_cors_origins('CORS_ALLOWED_ORIGINS', _default_cors_origins)
+CSRF_TRUSTED_ORIGINS = parse_cors_origins('CSRF_TRUSTED_ORIGINS', _default_cors_origins)
+
+# Log CORS config on startup (helpful for debugging)
+if os.environ.get('DEBUG', '0') == '0':
+    print(f"[CORS] Allowed origins: {CORS_ALLOWED_ORIGINS}")
+    print(f"[CSRF] Trusted origins: {CSRF_TRUSTED_ORIGINS}")
 
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+]
+CORS_ALLOW_METHODS = [
+    'DELETE',
+    'GET',
+    'OPTIONS',
+    'PATCH',
+    'POST',
+    'PUT',
+]
 
 # Phone number field settings
 PHONENUMBER_DEFAULT_REGION = 'US'
