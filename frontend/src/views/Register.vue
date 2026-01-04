@@ -11,33 +11,24 @@
             </v-alert>
 
             <v-form @submit.prevent="handleRegister">
-              <!-- Verification Method Selection (only if Firebase enabled) -->
-              <v-radio-group v-if="firebaseEnabled" v-model="verificationMethod" inline class="mb-4">
-                <v-radio label="Verify by Phone" value="phone"></v-radio>
-                <v-radio label="Verify by Email" value="email"></v-radio>
-              </v-radio-group>
-
-              <!-- Phone Number -->
+              <!-- Phone Number (required when Firebase enabled) -->
               <v-text-field
-                v-if="verificationMethod === 'phone' || !firebaseEnabled"
                 v-model="formData.phone_number"
                 :label="firebaseEnabled ? 'Phone Number' : 'Phone Number (optional)'"
                 placeholder="+1234567890"
                 hint="Include country code (e.g., +1 for US)"
                 prepend-icon="mdi-phone"
-                :required="firebaseEnabled && verificationMethod === 'phone'"
+                :required="firebaseEnabled"
                 :error-messages="errors.phone_number"
                 @input="formatPhoneNumber"
               ></v-text-field>
 
-              <!-- Email -->
+              <!-- Email (optional) -->
               <v-text-field
-                v-if="verificationMethod === 'email' || !firebaseEnabled"
                 v-model="formData.email"
-                :label="firebaseEnabled ? 'Email' : 'Email (optional)'"
+                label="Email (optional)"
                 type="email"
                 prepend-icon="mdi-email"
-                :required="firebaseEnabled && verificationMethod === 'email'"
                 :error-messages="errors.email"
               ></v-text-field>
 
@@ -55,25 +46,6 @@
                 prepend-icon="mdi-card-account-details"
                 required
                 :error-messages="errors.display_name"
-              ></v-text-field>
-
-              <!-- Optional fields when Firebase enabled -->
-              <v-text-field
-                v-if="firebaseEnabled && verificationMethod === 'phone'"
-                v-model="formData.email"
-                label="Email (optional)"
-                type="email"
-                prepend-icon="mdi-email"
-                :error-messages="errors.email"
-              ></v-text-field>
-
-              <v-text-field
-                v-if="firebaseEnabled && verificationMethod === 'email'"
-                v-model="formData.phone_number"
-                label="Phone Number (optional)"
-                placeholder="+1234567890"
-                prepend-icon="mdi-phone"
-                :error-messages="errors.phone_number"
               ></v-text-field>
 
               <v-text-field
@@ -152,35 +124,13 @@
           </v-card>
         </v-dialog>
 
-        <!-- Email Verification Notice Dialog -->
-        <v-dialog v-model="showEmailVerification" persistent max-width="400">
-          <v-card>
-            <v-card-title>Verify Your Email</v-card-title>
-            <v-card-text>
-              <v-icon size="64" color="primary" class="d-block mx-auto mb-4">mdi-email-check</v-icon>
-              <p class="text-center">
-                We've sent a verification email to <strong>{{ formData.email }}</strong>
-              </p>
-              <p class="text-center text-grey">
-                Please check your inbox and click the verification link.
-                After verifying, come back and log in.
-              </p>
-            </v-card-text>
-            <v-card-actions>
-              <v-spacer></v-spacer>
-              <v-btn color="primary" @click="goToLogin">
-                Go to Login
-              </v-btn>
-            </v-card-actions>
-          </v-card>
-        </v-dialog>
       </v-col>
     </v-row>
   </v-container>
 </template>
 
 <script setup>
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -188,7 +138,6 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const firebaseEnabled = computed(() => authStore.firebaseConfigured)
-const verificationMethod = ref('phone')
 const formData = ref({
   phone_number: '',
   username: '',
@@ -200,7 +149,6 @@ const formData = ref({
 
 const loading = ref(false)
 const showPhoneVerification = ref(false)
-const showEmailVerification = ref(false)
 const verificationCode = ref('')
 const verifying = ref(false)
 const resending = ref(false)
@@ -218,16 +166,8 @@ const errors = ref({
 })
 
 // Initialize reCAPTCHA for phone registration
-watch(verificationMethod, (newMethod) => {
-  if (newMethod === 'phone' && firebaseEnabled.value) {
-    setTimeout(() => {
-      authStore.initRecaptcha('register-recaptcha-container')
-    }, 100)
-  }
-})
-
 onMounted(() => {
-  if (verificationMethod.value === 'phone' && firebaseEnabled.value) {
+  if (firebaseEnabled.value) {
     authStore.initRecaptcha('register-recaptcha-container')
   }
 })
@@ -268,22 +208,14 @@ const handleRegister = async () => {
       // Dev mode - just register directly with password
       await authStore.register({
         ...formData.value,
-        verification_method: 'phone'  // Default to phone but doesn't require verification
+        verification_method: 'phone'
       })
-      successMessage.value = 'Registration successful! Please wait for admin approval.'
+      successMessage.value = 'Registration successful!'
       setTimeout(() => router.push('/'), 2000)
-    } else if (verificationMethod.value === 'phone') {
+    } else {
       // Phone registration: Send OTP first
       await authStore.sendPhoneOTP(formData.value.phone_number)
       showPhoneVerification.value = true
-    } else {
-      // Email registration: Create Firebase user and send verification email
-      await authStore.signUpWithEmail(formData.value.email, formData.value.password)
-      await authStore.register({
-        ...formData.value,
-        verification_method: 'email'
-      })
-      showEmailVerification.value = true
     }
   } catch (error) {
     console.error('Registration error:', error)
@@ -340,7 +272,7 @@ const handlePhoneVerification = async () => {
     })
 
     showPhoneVerification.value = false
-    successMessage.value = 'Registration successful! Please wait for admin approval.'
+    successMessage.value = 'Registration successful! You can now use the app.'
     setTimeout(() => router.push('/'), 2000)
   } catch (error) {
     console.error('Verification error:', error)
@@ -369,10 +301,5 @@ const resendPhoneCode = async () => {
   } finally {
     resending.value = false
   }
-}
-
-const goToLogin = () => {
-  showEmailVerification.value = false
-  router.push('/login')
 }
 </script>

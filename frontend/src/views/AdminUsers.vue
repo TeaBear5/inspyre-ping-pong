@@ -71,40 +71,22 @@
             <td>
               <v-btn-group density="compact">
                 <v-btn
-                  v-if="!user.phone_verified"
-                  color="primary"
+                  v-if="user.is_approved"
+                  color="warning"
                   size="small"
-                  @click="verifyPhone(user)"
+                  @click="revokeAccess(user)"
                   :loading="loading[user.id]"
                 >
-                  Verify Phone
+                  Revoke Access
                 </v-btn>
                 <v-btn
                   v-if="!user.is_approved"
                   color="success"
                   size="small"
-                  @click="approveUser(user)"
+                  @click="restoreAccess(user)"
                   :loading="loading[user.id]"
                 >
-                  Approve
-                </v-btn>
-                <v-btn
-                  v-if="!user.phone_verified || !user.is_approved"
-                  color="info"
-                  size="small"
-                  @click="approveAndVerify(user)"
-                  :loading="loading[user.id]"
-                >
-                  Approve & Verify
-                </v-btn>
-                <v-btn
-                  v-if="user.is_approved"
-                  color="warning"
-                  size="small"
-                  @click="unapproveUser(user)"
-                  :loading="loading[user.id]"
-                >
-                  Revoke
+                  Restore Access
                 </v-btn>
               </v-btn-group>
             </td>
@@ -220,29 +202,17 @@ const updateUser = async (user, updates) => {
   }
 }
 
-const verifyPhone = async (user) => {
-  if (await updateUser(user, { phone_verified: true })) {
-    console.log(`Phone verified for ${user.username}`)
-  }
-}
-
-const approveUser = async (user) => {
-  if (await updateUser(user, { is_approved: true })) {
-    console.log(`User ${user.username} approved`)
-  }
-}
-
-const approveAndVerify = async (user) => {
-  if (await updateUser(user, { is_approved: true, phone_verified: true })) {
-    console.log(`User ${user.username} approved and verified`)
-  }
-}
-
-const unapproveUser = async (user) => {
-  if (confirm(`Are you sure you want to revoke approval for ${user.username}?`)) {
+const revokeAccess = async (user) => {
+  if (confirm(`Are you sure you want to revoke access for ${user.username}?`)) {
     if (await updateUser(user, { is_approved: false })) {
-      console.log(`Approval revoked for ${user.username}`)
+      console.log(`Access revoked for ${user.username}`)
     }
+  }
+}
+
+const restoreAccess = async (user) => {
+  if (await updateUser(user, { is_approved: true, phone_verified: true })) {
+    console.log(`Access restored for ${user.username}`)
   }
 }
 

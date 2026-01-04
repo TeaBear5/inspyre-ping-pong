@@ -117,12 +117,12 @@
     <v-main>
       <!-- Status Alerts -->
       <v-alert v-if="authStore.isAuthenticated && !authStore.isVerified && authStore.firebaseConfigured && !isAdmin" type="warning" dismissible class="mb-0">
-        <strong>Verification Required</strong> - Please verify your phone or email to access all features.
+        <strong>Verification Required</strong> - Please verify your phone to access all features.
         <v-btn size="small" color="white" variant="text" @click="router.push('/verify-phone')">Verify Now</v-btn>
       </v-alert>
 
-      <v-alert v-if="authStore.isAuthenticated && !authStore.isApproved && !isAdmin" type="info" dismissible class="mb-0">
-        <strong>Pending Approval</strong> - Your account is pending admin approval. You'll be notified once approved.
+      <v-alert v-if="authStore.isAuthenticated && !authStore.isApproved && authStore.isVerified && !isAdmin" type="info" dismissible class="mb-0">
+        <strong>Access Restricted</strong> - Your account access has been restricted. Please contact an administrator.
       </v-alert>
 
       <!-- Router View -->

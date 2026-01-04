@@ -8,8 +8,7 @@
             <!-- Dev mode notice -->
             <v-alert v-if="!firebaseEnabled" type="info" class="mb-4">
               <strong>Development Mode</strong>
-              <p class="mb-2">Verification is not required in development mode.</p>
-              <p class="mb-0">Your account should already be accessible once approved by an admin.</p>
+              <p class="mb-0">Verification is not required in development mode. Your account is automatically active.</p>
             </v-alert>
 
             <!-- Firebase enabled - show verification options -->
@@ -54,8 +53,18 @@
                         @click="verifyOtp"
                         :loading="verifying"
                         block
+                        class="mb-2"
                       >
                         Verify Code
+                      </v-btn>
+                      <v-btn
+                        variant="text"
+                        @click="resendPhoneCode"
+                        :loading="sendingOtp"
+                        block
+                        size="small"
+                      >
+                        Didn't receive code? Resend
                       </v-btn>
                     </template>
                   </v-card-text>
@@ -142,6 +151,27 @@ const startPhoneVerification = async () => {
     successMessage.value = 'Verification code sent!'
   } catch (error) {
     errorMessage.value = error.message || 'Failed to send verification code'
+  } finally {
+    sendingOtp.value = false
+  }
+}
+
+const resendPhoneCode = async () => {
+  sendingOtp.value = true
+  errorMessage.value = ''
+  otpCode.value = ''
+
+  try {
+    // Re-init reCAPTCHA for resend
+    authStore.initRecaptcha('verify-recaptcha-container')
+    await authStore.sendPhoneOTP(authStore.user?.phone_number)
+    successMessage.value = 'New verification code sent!'
+  } catch (error) {
+    if (error.code === 'auth/too-many-requests') {
+      errorMessage.value = 'Too many attempts. Please wait a few minutes and try again.'
+    } else {
+      errorMessage.value = error.message || 'Failed to resend code'
+    }
   } finally {
     sendingOtp.value = false
   }

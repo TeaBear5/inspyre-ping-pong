@@ -73,35 +73,36 @@ class UserRegistrationView(generics.CreateAPIView):
             user = serializer.save()
             print(f"[REGISTER] User created: {user.username} (id={user.id})")
 
-            # If Firebase token was verified, mark as verified
+            # If Firebase token was verified, mark as verified and auto-approve
             if firebase_data:
                 user.firebase_uid = firebase_data.get('uid')
                 if firebase_data.get('email_verified'):
                     user.email_verified = True
                 if firebase_data.get('phone_number'):
                     user.phone_verified = True
+                # Auto-approve user since they completed Firebase verification
+                user.is_approved = True
+                user.approved_at = timezone.now()
                 user.save()
-                print(f"[REGISTER] Firebase data linked to user")
+                print(f"[REGISTER] Firebase verified user {user.username} - auto-approved")
             elif not FirebaseService.initialize():
-                # Dev mode - Firebase not configured, auto-verify users
-                print(f"[REGISTER] Auto-verifying user {user.username} (Firebase not configured)")
+                # Dev mode - Firebase not configured, auto-verify and auto-approve users
+                print(f"[REGISTER] Auto-verifying and approving user {user.username} (Firebase not configured)")
                 if user.verification_method == 'phone':
                     user.phone_verified = True
                 else:
                     user.email_verified = True
+                user.is_approved = True
+                user.approved_at = timezone.now()
                 user.save()
 
             # Create token for the user
             print("[REGISTER] Creating auth token...")
             token, created = Token.objects.get_or_create(user=user)
 
-            # Notify admin for approval
-            print("[REGISTER] Creating admin notification...")
-            NotificationService.create_account_approval_notification(user)
-
             print(f"[REGISTER] Registration complete for {user.username}")
             return Response({
-                'message': 'Registration successful. Waiting for admin approval.',
+                'message': 'Registration successful!',
                 'user_id': str(user.id),
                 'token': token.key,
                 'user': UserSerializer(user).data
@@ -179,12 +180,20 @@ class LoginView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
 
-            # Update verification status from Firebase
+            # Update verification status from Firebase and auto-approve if verified
+            updated = False
             if firebase_data.get('email_verified') and not user.email_verified:
                 user.email_verified = True
-                user.save()
+                updated = True
             if phone and not user.phone_verified:
                 user.phone_verified = True
+                updated = True
+            # Auto-approve user if they're verified but not yet approved
+            if not user.is_approved and (user.phone_verified or user.email_verified):
+                user.is_approved = True
+                user.approved_at = timezone.now()
+                updated = True
+            if updated:
                 user.save()
 
             # Create or get token
