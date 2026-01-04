@@ -181,6 +181,7 @@ import { useAuthStore } from './stores/auth'
 import { useThemeStore } from './stores/theme'
 import { useTheme } from 'vuetify'
 import axios from 'axios'
+import { API_URL } from './config'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -191,8 +192,6 @@ const drawer = ref(false)
 const showNotifications = ref(false)
 const notifications = ref([])
 const unreadNotifications = ref(0)
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
 
 // Check if user is admin
 const isAdmin = computed(() => authStore.user?.is_staff || authStore.user?.is_superuser)

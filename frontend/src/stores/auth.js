@@ -1,8 +1,7 @@
 import { defineStore } from 'pinia'
 import axios from 'axios'
 import { isFirebaseConfigured, initializeFirebase } from '../firebase'
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+import { API_URL } from '../config'
 
 export const useAuthStore = defineStore('auth', {
   state: () => {

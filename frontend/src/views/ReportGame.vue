@@ -177,7 +177,7 @@ import axios from 'axios'
 
 const router = useRouter()
 const authStore = useAuthStore()
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+import { API_URL } from '../config'
 
 // Form refs
 const form = ref(null)

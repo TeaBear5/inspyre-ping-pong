@@ -161,7 +161,7 @@ import { useAuthStore } from '../stores/auth'
 import axios from 'axios'
 
 const authStore = useAuthStore()
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api'
+import { API_URL } from '../config'
 
 const users = ref([])
 const search = ref('')
