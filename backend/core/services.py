@@ -25,30 +25,40 @@ class FirebaseService:
         try:
             # Try different methods to get credentials
             if settings.FIREBASE_CREDENTIALS_PATH:
-                # Use credentials file path
+                print(f"[FIREBASE] Initializing with credentials file: {settings.FIREBASE_CREDENTIALS_PATH}")
                 cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
                 firebase_admin.initialize_app(cred)
                 cls._initialized = True
+                print("[FIREBASE] Initialized successfully from file")
             elif settings.FIREBASE_CREDENTIALS_JSON:
-                # Use credentials from JSON string (useful for Docker/env vars)
+                json_preview = settings.FIREBASE_CREDENTIALS_JSON[:100] if settings.FIREBASE_CREDENTIALS_JSON else ''
+                print(f"[FIREBASE] Initializing with JSON credentials (length={len(settings.FIREBASE_CREDENTIALS_JSON)}, preview={json_preview}...)")
                 cred_dict = json.loads(settings.FIREBASE_CREDENTIALS_JSON)
+                print(f"[FIREBASE] JSON parsed successfully, project_id={cred_dict.get('project_id')}")
                 cred = credentials.Certificate(cred_dict)
                 firebase_admin.initialize_app(cred)
                 cls._initialized = True
+                print("[FIREBASE] Initialized successfully from JSON")
             elif settings.FIREBASE_PROJECT_ID:
-                # Use default credentials (works on Google Cloud)
+                print(f"[FIREBASE] Initializing with default credentials, project_id={settings.FIREBASE_PROJECT_ID}")
                 firebase_admin.initialize_app(options={
                     'projectId': settings.FIREBASE_PROJECT_ID
                 })
                 cls._initialized = True
+                print("[FIREBASE] Initialized successfully with default credentials")
             else:
                 # Development mode - Firebase not configured
-                print("[DEV] Firebase not configured - running in development mode")
+                print("[FIREBASE] Not configured - running in development mode (no credentials found)")
                 return False
 
             return True
+        except json.JSONDecodeError as e:
+            print(f"[FIREBASE ERROR] Invalid JSON in credentials: {e}")
+            return False
         except Exception as e:
-            print(f"[DEV] Firebase initialization error: {e}")
+            import traceback
+            print(f"[FIREBASE ERROR] Initialization failed: {type(e).__name__}: {e}")
+            print(f"[FIREBASE ERROR] Traceback:\n{traceback.format_exc()}")
             return False
 
     @classmethod

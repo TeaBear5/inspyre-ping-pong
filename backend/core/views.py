@@ -44,56 +44,75 @@ class UserRegistrationView(generics.CreateAPIView):
     permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
-        firebase_token = request.data.get('firebase_token')
+        import traceback
+        try:
+            print(f"[REGISTER] Starting registration with data keys: {request.data.keys()}")
+            firebase_token = request.data.get('firebase_token')
 
-        # Verify Firebase token if provided
-        firebase_data = None
-        if firebase_token:
-            firebase_data = FirebaseService.verify_id_token(firebase_token)
+            # Verify Firebase token if provided
+            firebase_data = None
+            if firebase_token:
+                print("[REGISTER] Verifying Firebase token...")
+                firebase_data = FirebaseService.verify_id_token(firebase_token)
+                if firebase_data:
+                    print(f"[REGISTER] Firebase token verified for: {firebase_data.get('email') or firebase_data.get('phone_number')}")
+                    # Auto-fill verification status from Firebase
+                    if firebase_data.get('email'):
+                        request.data['email'] = firebase_data.get('email')
+                    if firebase_data.get('phone_number'):
+                        request.data['phone_number'] = firebase_data.get('phone_number')
+
+            print("[REGISTER] Validating serializer...")
+            serializer = self.get_serializer(data=request.data)
+
+            if not serializer.is_valid():
+                print(f"[REGISTER] Validation errors: {serializer.errors}")
+                return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+            print("[REGISTER] Creating user...")
+            user = serializer.save()
+            print(f"[REGISTER] User created: {user.username} (id={user.id})")
+
+            # If Firebase token was verified, mark as verified
             if firebase_data:
-                # Auto-fill verification status from Firebase
-                if firebase_data.get('email'):
-                    request.data['email'] = firebase_data.get('email')
+                user.firebase_uid = firebase_data.get('uid')
+                if firebase_data.get('email_verified'):
+                    user.email_verified = True
                 if firebase_data.get('phone_number'):
-                    request.data['phone_number'] = firebase_data.get('phone_number')
+                    user.phone_verified = True
+                user.save()
+                print(f"[REGISTER] Firebase data linked to user")
+            elif not FirebaseService.initialize():
+                # Dev mode - Firebase not configured, auto-verify users
+                print(f"[REGISTER] Auto-verifying user {user.username} (Firebase not configured)")
+                if user.verification_method == 'phone':
+                    user.phone_verified = True
+                else:
+                    user.email_verified = True
+                user.save()
 
-        serializer = self.get_serializer(data=request.data)
+            # Create token for the user
+            print("[REGISTER] Creating auth token...")
+            token, created = Token.objects.get_or_create(user=user)
 
-        if not serializer.is_valid():
-            print(f"Validation errors: {serializer.errors}")  # Debug logging
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            # Notify admin for approval
+            print("[REGISTER] Creating admin notification...")
+            NotificationService.create_account_approval_notification(user)
 
-        user = serializer.save()
-
-        # If Firebase token was verified, mark as verified
-        if firebase_data:
-            user.firebase_uid = firebase_data.get('uid')
-            if firebase_data.get('email_verified'):
-                user.email_verified = True
-            if firebase_data.get('phone_number'):
-                user.phone_verified = True
-            user.save()
-        elif not FirebaseService.initialize():
-            # Dev mode - Firebase not configured, auto-verify users
-            print(f"[DEV] Auto-verifying user {user.username} (Firebase not configured)")
-            if user.verification_method == 'phone':
-                user.phone_verified = True
-            else:
-                user.email_verified = True
-            user.save()
-
-        # Create token for the user
-        token, created = Token.objects.get_or_create(user=user)
-
-        # Notify admin for approval
-        NotificationService.create_account_approval_notification(user)
-
-        return Response({
-            'message': 'Registration successful. Waiting for admin approval.',
-            'user_id': str(user.id),
-            'token': token.key,
-            'user': UserSerializer(user).data
-        }, status=status.HTTP_201_CREATED)
+            print(f"[REGISTER] Registration complete for {user.username}")
+            return Response({
+                'message': 'Registration successful. Waiting for admin approval.',
+                'user_id': str(user.id),
+                'token': token.key,
+                'user': UserSerializer(user).data
+            }, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            print(f"[REGISTER ERROR] {type(e).__name__}: {e}")
+            print(f"[REGISTER ERROR] Traceback:\n{traceback.format_exc()}")
+            return Response(
+                {'error': f'Registration failed: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class LoginView(APIView):
