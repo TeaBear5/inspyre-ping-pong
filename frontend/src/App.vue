@@ -116,8 +116,8 @@
     <!-- Main Content -->
     <v-main>
       <!-- Status Alerts -->
-      <v-alert v-if="authStore.isAuthenticated && !authStore.phoneVerified && !isAdmin" type="warning" dismissible class="mb-0">
-        <strong>Phone Verification Required</strong> - Please verify your phone number to access all features.
+      <v-alert v-if="authStore.isAuthenticated && !authStore.isVerified && authStore.firebaseConfigured && !isAdmin" type="warning" dismissible class="mb-0">
+        <strong>Verification Required</strong> - Please verify your phone or email to access all features.
         <v-btn size="small" color="white" variant="text" @click="router.push('/verify-phone')">Verify Now</v-btn>
       </v-alert>
 

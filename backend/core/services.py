@@ -1,82 +1,174 @@
 """
-Services for phone authentication, notifications, and other business logic
+Services for Firebase authentication, notifications, and other business logic
 """
-import random
-import string
+import json
 from datetime import datetime, timedelta
 from django.utils import timezone
 from django.conf import settings
-from twilio.rest import Client
-from twilio.base.exceptions import TwilioRestException
 from django.core.mail import send_mail
-from django.template.loader import render_to_string
+
+# Firebase Admin SDK
+import firebase_admin
+from firebase_admin import credentials, auth as firebase_auth
 
 
-class PhoneVerificationService:
-    """Service for handling phone number verification"""
+class FirebaseService:
+    """Service for Firebase Authentication"""
+    _initialized = False
 
-    @staticmethod
-    def generate_verification_code():
-        """Generate a 6-digit verification code"""
-        return ''.join(random.choices(string.digits, k=6))
-
-    @staticmethod
-    def send_verification_code(phone_number, code):
-        """
-        Send verification code via SMS using Twilio
-        Returns True if successful, False otherwise
-        """
-        if not all([settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN, settings.TWILIO_PHONE_NUMBER]):
-            # If Twilio not configured, print to console (development)
-            print(f"[DEV] Verification code for {phone_number}: {code}")
+    @classmethod
+    def initialize(cls):
+        """Initialize Firebase Admin SDK"""
+        if cls._initialized:
             return True
 
         try:
-            client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
-            message = client.messages.create(
-                body=f"Your Ping Pong Tracker verification code is: {code}",
-                from_=settings.TWILIO_PHONE_NUMBER,
-                to=str(phone_number)
-            )
-            return message.sid is not None
-        except TwilioRestException as e:
-            print(f"Error sending SMS: {e}")
+            # Try different methods to get credentials
+            if settings.FIREBASE_CREDENTIALS_PATH:
+                # Use credentials file path
+                cred = credentials.Certificate(settings.FIREBASE_CREDENTIALS_PATH)
+                firebase_admin.initialize_app(cred)
+                cls._initialized = True
+            elif settings.FIREBASE_CREDENTIALS_JSON:
+                # Use credentials from JSON string (useful for Docker/env vars)
+                cred_dict = json.loads(settings.FIREBASE_CREDENTIALS_JSON)
+                cred = credentials.Certificate(cred_dict)
+                firebase_admin.initialize_app(cred)
+                cls._initialized = True
+            elif settings.FIREBASE_PROJECT_ID:
+                # Use default credentials (works on Google Cloud)
+                firebase_admin.initialize_app(options={
+                    'projectId': settings.FIREBASE_PROJECT_ID
+                })
+                cls._initialized = True
+            else:
+                # Development mode - Firebase not configured
+                print("[DEV] Firebase not configured - running in development mode")
+                return False
+
+            return True
+        except Exception as e:
+            print(f"[DEV] Firebase initialization error: {e}")
             return False
+
+    @classmethod
+    def verify_id_token(cls, id_token):
+        """
+        Verify a Firebase ID token and return the decoded token
+        Returns None if invalid or Firebase not configured
+        """
+        if not cls.initialize():
+            # Development mode - return mock verification
+            print(f"[DEV] Mock token verification for: {id_token[:20]}...")
+            return None
+
+        try:
+            decoded_token = firebase_auth.verify_id_token(id_token)
+            return decoded_token
+        except firebase_auth.InvalidIdTokenError:
+            return None
+        except firebase_auth.ExpiredIdTokenError:
+            return None
+        except Exception as e:
+            print(f"Firebase token verification error: {e}")
+            return None
+
+    @classmethod
+    def get_user_by_email(cls, email):
+        """Get Firebase user by email"""
+        if not cls.initialize():
+            return None
+
+        try:
+            return firebase_auth.get_user_by_email(email)
+        except firebase_auth.UserNotFoundError:
+            return None
+        except Exception as e:
+            print(f"Firebase get user error: {e}")
+            return None
+
+    @classmethod
+    def get_user_by_phone(cls, phone_number):
+        """Get Firebase user by phone number"""
+        if not cls.initialize():
+            return None
+
+        try:
+            return firebase_auth.get_user_by_phone_number(phone_number)
+        except firebase_auth.UserNotFoundError:
+            return None
+        except Exception as e:
+            print(f"Firebase get user error: {e}")
+            return None
+
+    @classmethod
+    def create_custom_token(cls, uid, claims=None):
+        """Create a custom token for a user"""
+        if not cls.initialize():
+            return None
+
+        try:
+            return firebase_auth.create_custom_token(uid, claims)
+        except Exception as e:
+            print(f"Firebase create token error: {e}")
+            return None
+
+    @classmethod
+    def send_email_verification(cls, email):
+        """
+        Generate email verification link
+        Note: In production, Firebase handles sending the email automatically
+        when using Firebase Auth on the frontend
+        """
+        if not cls.initialize():
+            # Development mode - print to console
+            print(f"[DEV] Email verification would be sent to: {email}")
+            return True
+
+        try:
+            # Generate the verification link
+            link = firebase_auth.generate_email_verification_link(email)
+            print(f"[INFO] Verification link for {email}: {link}")
+            return True
+        except Exception as e:
+            print(f"Firebase email verification error: {e}")
+            return False
+
+
+class VerificationService:
+    """
+    Service for handling verification
+    With Firebase, verification happens on the frontend and backend just verifies tokens
+    """
 
     @staticmethod
-    def verify_code(user, code):
+    def verify_firebase_token(id_token):
         """
-        Verify the code for a user
-        Returns True if valid, False otherwise
+        Verify a Firebase ID token
+        Returns the decoded token data or None if invalid
         """
-        if not user.verification_code:
-            return False
-
-        if user.verification_code != code:
-            return False
-
-        if not user.is_verification_code_valid():
-            return False
-
-        # Mark as verified
-        user.phone_verified = True
-        user.verification_code = ''
-        user.verification_code_created = None
-        user.save()
-
-        return True
+        return FirebaseService.verify_id_token(id_token)
 
     @staticmethod
-    def request_verification(user):
+    def is_user_verified_in_firebase(id_token):
         """
-        Generate and send a new verification code for a user
+        Check if the user's email/phone is verified in Firebase
         """
-        code = PhoneVerificationService.generate_verification_code()
-        user.verification_code = code
-        user.verification_code_created = timezone.now()
-        user.save()
+        decoded = FirebaseService.verify_id_token(id_token)
+        if not decoded:
+            return False, None
 
-        return PhoneVerificationService.send_verification_code(user.phone_number, code)
+        # Check verification status from Firebase token
+        email_verified = decoded.get('email_verified', False)
+        phone_number = decoded.get('phone_number')  # If present, phone is verified
+
+        return True, {
+            'uid': decoded.get('uid'),
+            'email': decoded.get('email'),
+            'email_verified': email_verified,
+            'phone_number': phone_number,
+            'phone_verified': phone_number is not None
+        }
 
 
 class NotificationService:
@@ -91,7 +183,7 @@ class NotificationService:
                 message=message,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[settings.ADMIN_EMAIL],
-                fail_silently=False,
+                fail_silently=True,  # Don't crash if email fails
             )
             return True
         except Exception as e:
@@ -173,7 +265,7 @@ class NotificationService:
         """Notify admin when a new account needs approval"""
         NotificationService.notify_admin(
             subject='New Account Pending Approval',
-            message=f'New user registration:\nName: {user.display_name}\nUsername: {user.username}\nPhone: {user.phone_number}'
+            message=f'New user registration:\nName: {user.display_name}\nUsername: {user.username}'
         )
 
         # Create admin notification in database

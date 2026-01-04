@@ -22,12 +22,15 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-n=*c-fpv#fu+egfu&!ox+ib4=$$ee9x4rn5anqm4rh0r3m=4%w"
+SECRET_KEY = os.environ.get('SECRET_KEY', "django-insecure-n=*c-fpv#fu+egfu&!ox+ib4=$$ee9x4rn5anqm4rh0r3m=4%w")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get('DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+
+# CSRF trusted origins for production
+CSRF_TRUSTED_ORIGINS = os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:8000,http://127.0.0.1:8000').split(',')
 
 
 # Application definition
@@ -82,12 +85,25 @@ WSGI_APPLICATION = "pingpong_tracker.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# Use PostgreSQL in production/docker, SQLite for simple local dev
+if os.environ.get('DB_HOST'):
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.environ.get('DB_NAME', 'pingpong'),
+            'USER': os.environ.get('DB_USER', 'postgres'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', ''),
+            'HOST': os.environ.get('DB_HOST', 'db'),
+            'PORT': os.environ.get('DB_PORT', '5432'),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 
 # Password validation
@@ -125,6 +141,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = "static/"
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -155,25 +172,29 @@ REST_FRAMEWORK = {
 }
 
 # CORS settings
+_cors_origins = os.environ.get('CORS_ALLOWED_ORIGINS', '')
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Vue dev server
     "http://localhost:5174",
     "http://localhost:3000",
+    "http://localhost:8080",  # Docker dev frontend
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
-]
+] + ([origin.strip() for origin in _cors_origins.split(',') if origin.strip()] if _cors_origins else [])
 
 CORS_ALLOW_CREDENTIALS = True
 
 # Phone number field settings
 PHONENUMBER_DEFAULT_REGION = 'US'
 
-# Twilio settings (for SMS verification)
-TWILIO_ACCOUNT_SID = config('TWILIO_ACCOUNT_SID', default='')
-TWILIO_AUTH_TOKEN = config('TWILIO_AUTH_TOKEN', default='')
-TWILIO_PHONE_NUMBER = config('TWILIO_PHONE_NUMBER', default='')
+# Firebase Configuration
+# For local development: set FIREBASE_CREDENTIALS_JSON env var with the JSON content
+# For production: use Google Cloud's default credentials or mount the service account file
+FIREBASE_CREDENTIALS_PATH = os.environ.get('FIREBASE_CREDENTIALS_PATH', '')
+FIREBASE_CREDENTIALS_JSON = os.environ.get('FIREBASE_CREDENTIALS_JSON', '')
+FIREBASE_PROJECT_ID = os.environ.get('FIREBASE_PROJECT_ID', '')
 
-# Email settings (for admin notifications)
-EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'  # Use SMTP in production
-DEFAULT_FROM_EMAIL = 'noreply@pingpongtracker.com'
+# Email settings (console for dev, Firebase handles verification emails in production)
+EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@pingpongtracker.com')
 ADMIN_EMAIL = config('ADMIN_EMAIL', default='admin@pingpongtracker.com')

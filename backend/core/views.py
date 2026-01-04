@@ -22,7 +22,7 @@ from .serializers import (
     WeeklyLeaderboardSerializer, TournamentSerializer, TournamentMatchSerializer,
     NotificationSerializer, RankingsSerializer
 )
-from .services import PhoneVerificationService, NotificationService, GameService, TrophyService
+from .services import FirebaseService, VerificationService, NotificationService, GameService, TrophyService
 
 
 class IsApprovedUser(permissions.BasePermission):
@@ -32,12 +32,31 @@ class IsApprovedUser(permissions.BasePermission):
 
 
 class UserRegistrationView(generics.CreateAPIView):
-    """Register a new user"""
+    """
+    Register a new user with Firebase authentication
+
+    Flow:
+    1. Frontend authenticates with Firebase (phone or email)
+    2. Frontend sends Firebase ID token + user details to this endpoint
+    3. Backend verifies token, creates Django user, returns Django token
+    """
     serializer_class = UserRegistrationSerializer
     permission_classes = [permissions.AllowAny]
 
     def create(self, request, *args, **kwargs):
-        print(f"Registration data: {request.data}")  # Debug logging
+        firebase_token = request.data.get('firebase_token')
+
+        # Verify Firebase token if provided
+        firebase_data = None
+        if firebase_token:
+            firebase_data = FirebaseService.verify_id_token(firebase_token)
+            if firebase_data:
+                # Auto-fill verification status from Firebase
+                if firebase_data.get('email'):
+                    request.data['email'] = firebase_data.get('email')
+                if firebase_data.get('phone_number'):
+                    request.data['phone_number'] = firebase_data.get('phone_number')
+
         serializer = self.get_serializer(data=request.data)
 
         if not serializer.is_valid():
@@ -46,17 +65,31 @@ class UserRegistrationView(generics.CreateAPIView):
 
         user = serializer.save()
 
+        # If Firebase token was verified, mark as verified
+        if firebase_data:
+            user.firebase_uid = firebase_data.get('uid')
+            if firebase_data.get('email_verified'):
+                user.email_verified = True
+            if firebase_data.get('phone_number'):
+                user.phone_verified = True
+            user.save()
+        elif not FirebaseService.initialize():
+            # Dev mode - Firebase not configured, auto-verify users
+            print(f"[DEV] Auto-verifying user {user.username} (Firebase not configured)")
+            if user.verification_method == 'phone':
+                user.phone_verified = True
+            else:
+                user.email_verified = True
+            user.save()
+
         # Create token for the user
         token, created = Token.objects.get_or_create(user=user)
-
-        # Request verification code
-        PhoneVerificationService.request_verification(user)
 
         # Notify admin for approval
         NotificationService.create_account_approval_notification(user)
 
         return Response({
-            'message': 'Registration successful. Please verify your phone number and wait for admin approval.',
+            'message': 'Registration successful. Waiting for admin approval.',
             'user_id': str(user.id),
             'token': token.key,
             'user': UserSerializer(user).data
@@ -64,23 +97,119 @@ class UserRegistrationView(generics.CreateAPIView):
 
 
 class LoginView(APIView):
-    """Login with phone number and password"""
+    """
+    Login with Firebase token OR username/email/phone + password
+
+    Supports two modes:
+    1. Firebase Auth: Send firebase_token from frontend
+    2. Password Auth: Send identifier + password (for development/fallback)
+    """
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        phone_number = request.data.get('phone_number')
+        firebase_token = request.data.get('firebase_token')
+
+        # Firebase token login
+        if firebase_token:
+            firebase_data = FirebaseService.verify_id_token(firebase_token)
+
+            if not firebase_data:
+                return Response(
+                    {'error': 'Invalid Firebase token'},
+                    status=status.HTTP_401_UNAUTHORIZED
+                )
+
+            # Find user by Firebase UID, email, or phone
+            user = None
+            firebase_uid = firebase_data.get('uid')
+            email = firebase_data.get('email')
+            phone = firebase_data.get('phone_number')
+
+            # Try Firebase UID first
+            if firebase_uid:
+                try:
+                    user = User.objects.get(firebase_uid=firebase_uid)
+                except User.DoesNotExist:
+                    pass
+
+            # Try email
+            if not user and email:
+                try:
+                    user = User.objects.get(email=email)
+                    # Link Firebase UID if not set
+                    if not user.firebase_uid:
+                        user.firebase_uid = firebase_uid
+                        user.save()
+                except User.DoesNotExist:
+                    pass
+
+            # Try phone
+            if not user and phone:
+                try:
+                    user = User.objects.get(phone_number=phone)
+                    # Link Firebase UID if not set
+                    if not user.firebase_uid:
+                        user.firebase_uid = firebase_uid
+                        user.save()
+                except User.DoesNotExist:
+                    pass
+
+            if not user:
+                return Response(
+                    {'error': 'No account found. Please register first.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+
+            # Update verification status from Firebase
+            if firebase_data.get('email_verified') and not user.email_verified:
+                user.email_verified = True
+                user.save()
+            if phone and not user.phone_verified:
+                user.phone_verified = True
+                user.save()
+
+            # Create or get token
+            token, created = Token.objects.get_or_create(user=user)
+
+            return Response({
+                'token': token.key,
+                'user': UserSerializer(user).data
+            })
+
+        # Password login (fallback/development)
+        identifier = request.data.get('identifier') or request.data.get('phone_number') or request.data.get('username') or request.data.get('email')
         password = request.data.get('password')
 
-        if not phone_number or not password:
+        if not identifier or not password:
             return Response(
-                {'error': 'Phone number and password are required'},
+                {'error': 'Firebase token OR username/email/phone + password required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        # Authenticate using phone number
+        # Try to find user by username, email, or phone number
+        user = None
+
+        # Try username first
         try:
-            user = User.objects.get(phone_number=phone_number)
+            user = User.objects.get(username=identifier)
         except User.DoesNotExist:
+            pass
+
+        # Try email if not found
+        if not user:
+            try:
+                user = User.objects.get(email=identifier)
+            except User.DoesNotExist:
+                pass
+
+        # Try phone number if not found
+        if not user:
+            try:
+                user = User.objects.get(phone_number=identifier)
+            except User.DoesNotExist:
+                pass
+
+        if not user:
             return Response(
                 {'error': 'Invalid credentials'},
                 status=status.HTTP_401_UNAUTHORIZED
@@ -102,42 +231,85 @@ class LoginView(APIView):
         })
 
 
-class PhoneVerificationView(APIView):
-    """Verify phone number with code"""
+class FirebaseVerificationView(APIView):
+    """
+    Sync verification status from Firebase
+
+    Frontend calls this after Firebase verification is complete
+    to update the Django user's verification status
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        serializer = PhoneVerificationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
+        firebase_token = request.data.get('firebase_token')
 
-        code = serializer.validated_data['code']
-        if PhoneVerificationService.verify_code(request.user, code):
-            return Response({'message': 'Phone number verified successfully'})
-        else:
+        if not firebase_token:
             return Response(
-                {'error': 'Invalid or expired verification code'},
+                {'error': 'Firebase token required'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
+        firebase_data = FirebaseService.verify_id_token(firebase_token)
+
+        if not firebase_data:
+            return Response(
+                {'error': 'Invalid Firebase token'},
+                status=status.HTTP_401_UNAUTHORIZED
+            )
+
+        user = request.user
+        updated = False
+
+        # Update verification status
+        if firebase_data.get('email_verified') and not user.email_verified:
+            user.email_verified = True
+            updated = True
+
+        if firebase_data.get('phone_number') and not user.phone_verified:
+            user.phone_verified = True
+            updated = True
+
+        # Link Firebase UID if not set
+        if not user.firebase_uid and firebase_data.get('uid'):
+            user.firebase_uid = firebase_data.get('uid')
+            updated = True
+
+        if updated:
+            user.save()
+
+        return Response({
+            'message': 'Verification status synced',
+            'user': UserSerializer(user).data
+        })
+
+
+# Keep for backwards compatibility but redirect to Firebase
+class PhoneVerificationView(FirebaseVerificationView):
+    """Legacy endpoint - use FirebaseVerificationView instead"""
+    pass
 
 
 class ResendVerificationView(APIView):
-    """Resend verification code"""
+    """
+    Resend verification - with Firebase, this is handled on the frontend
+    This endpoint just returns instructions
+    """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
-        if request.user.phone_verified:
+        user = request.user
+
+        # Check if already verified
+        if user.is_verified:
             return Response(
-                {'error': 'Phone number already verified'},
+                {'error': 'Already verified'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        if PhoneVerificationService.request_verification(request.user):
-            return Response({'message': 'Verification code sent'})
-        else:
-            return Response(
-                {'error': 'Failed to send verification code'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+        return Response({
+            'message': 'Please use the Firebase verification flow in the app',
+            'verification_method': user.verification_method
+        })
 
 
 class UserProfileView(generics.RetrieveUpdateAPIView):
@@ -579,8 +751,9 @@ class ApprovedPlayersView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        """Return only approved and phone verified users"""
+        """Return only approved and verified users (phone OR email)"""
         return User.objects.filter(
-            is_approved=True,
-            phone_verified=True
+            is_approved=True
+        ).filter(
+            Q(phone_verified=True) | Q(email_verified=True)
         ).order_by('display_name', 'username')

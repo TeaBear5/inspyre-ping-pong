@@ -310,3 +310,10 @@ public
 # Database dumps
 *.sql
 *.dump
+
+# Docker
+docker-compose.override.yml
+.docker/
+
+# Google Cloud
+.gcloudignore

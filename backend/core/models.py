@@ -9,10 +9,17 @@ from django.utils import timezone
 
 class User(AbstractUser):
     """Custom user model with phone number authentication and admin approval"""
+
+    VERIFICATION_METHODS = [
+        ('phone', 'Phone (SMS)'),
+        ('email', 'Email'),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    phone_number = PhoneNumberField(unique=True, null=False, blank=False)
+    firebase_uid = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    phone_number = PhoneNumberField(unique=True, null=True, blank=True)
     username = models.CharField(max_length=30, unique=True)
-    email = models.EmailField(null=True, blank=True)
+    email = models.EmailField(unique=True, null=True, blank=True)
 
     # Profile fields
     display_name = models.CharField(max_length=100)
@@ -24,8 +31,10 @@ class User(AbstractUser):
     approved_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_users')
     approved_at = models.DateTimeField(null=True, blank=True)
 
-    # Verification
+    # Verification - supports both phone and email
+    verification_method = models.CharField(max_length=10, choices=VERIFICATION_METHODS, default='phone')
     phone_verified = models.BooleanField(default=False)
+    email_verified = models.BooleanField(default=False)
     verification_code = models.CharField(max_length=6, blank=True)
     verification_code_created = models.DateTimeField(null=True, blank=True)
 
@@ -33,8 +42,15 @@ class User(AbstractUser):
     # date_joined already exists in AbstractUser
     last_active = models.DateTimeField(auto_now=True)
 
-    USERNAME_FIELD = 'phone_number'
-    REQUIRED_FIELDS = ['username', 'display_name']
+    USERNAME_FIELD = 'username'  # Changed to username for flexibility
+    REQUIRED_FIELDS = ['display_name']
+
+    @property
+    def is_verified(self):
+        """Check if user is verified via their chosen method"""
+        if self.verification_method == 'phone':
+            return self.phone_verified
+        return self.email_verified
 
     def __str__(self):
         return f"{self.display_name} ({self.username})"

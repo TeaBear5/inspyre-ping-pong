@@ -11,13 +11,18 @@ from .models import (
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     """Serializer for user registration"""
-    phone_number = PhoneNumberField()
+    phone_number = PhoneNumberField(required=False, allow_null=True, allow_blank=True)
+    email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
+    verification_method = serializers.ChoiceField(
+        choices=['phone', 'email'],
+        default='phone'
+    )
 
     class Meta:
         model = User
-        fields = ['phone_number', 'username', 'display_name', 'password', 'password_confirm', 'email']
+        fields = ['phone_number', 'username', 'display_name', 'password', 'password_confirm', 'email', 'verification_method']
 
     def validate_username(self, value):
         """Check if username already exists"""
@@ -27,13 +32,39 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def validate_phone_number(self, value):
         """Check if phone number already exists"""
-        if User.objects.filter(phone_number=value).exists():
+        # Convert empty string to None
+        if value == '':
+            return None
+        if value and User.objects.filter(phone_number=value).exists():
             raise serializers.ValidationError("An account with this phone number already exists.")
+        return value
+
+    def validate_email(self, value):
+        """Check if email already exists"""
+        # Convert empty string to None
+        if value == '':
+            return None
+        if value and User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("An account with this email already exists.")
         return value
 
     def validate(self, data):
         if data['password'] != data['password_confirm']:
             raise serializers.ValidationError({"password_confirm": "Passwords don't match"})
+
+        # Check if Firebase is configured (for production verification requirements)
+        from .services import FirebaseService
+        firebase_configured = FirebaseService.initialize()
+
+        verification_method = data.get('verification_method', 'phone')
+
+        # Only enforce verification method requirements if Firebase is configured
+        if firebase_configured:
+            if verification_method == 'phone' and not data.get('phone_number'):
+                raise serializers.ValidationError({"phone_number": "Phone number is required for phone verification"})
+            if verification_method == 'email' and not data.get('email'):
+                raise serializers.ValidationError({"email": "Email is required for email verification"})
+
         return data
 
     def create(self, validated_data):
@@ -56,10 +87,12 @@ class PhoneVerificationSerializer(serializers.Serializer):
 
 class UserSerializer(serializers.ModelSerializer):
     """Basic user serializer"""
+    is_verified = serializers.ReadOnlyField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'display_name', 'bio', 'avatar', 'is_approved', 'phone_verified', 'is_staff', 'is_superuser']
-        read_only_fields = ['id', 'is_approved', 'phone_verified', 'is_staff', 'is_superuser']
+        fields = ['id', 'username', 'display_name', 'bio', 'avatar', 'email', 'is_approved', 'phone_verified', 'email_verified', 'verification_method', 'is_verified', 'is_staff', 'is_superuser']
+        read_only_fields = ['id', 'is_approved', 'phone_verified', 'email_verified', 'is_verified', 'is_staff', 'is_superuser']
 
 
 class PlayerProfileSerializer(serializers.ModelSerializer):
