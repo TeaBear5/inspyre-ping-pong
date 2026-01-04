@@ -36,10 +36,9 @@ FROM nginx:stable-alpine as production-stage
 # Copy built files from build stage
 COPY --from=build-stage /app/dist /usr/share/nginx/html
 
-# Fix permissions for all files (nginx needs to read them)
-RUN chmod -R 644 /usr/share/nginx/html/* && \
-    chmod 755 /usr/share/nginx/html && \
-    chmod 755 /usr/share/nginx/html/assets
+# Fix permissions for nginx: directories need 755, files need 644
+RUN find /usr/share/nginx/html -type d -exec chmod 755 {} \; && \
+    find /usr/share/nginx/html -type f -exec chmod 644 {} \;
 
 # Custom Nginx config for SPA routing
 COPY nginx.conf /etc/nginx/conf.d/default.conf

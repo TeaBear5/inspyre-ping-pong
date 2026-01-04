@@ -80,6 +80,7 @@ steps:
     secretEnv: ['DB_PASSWORD', 'SECRET_KEY']
 
   # 6. Deploy Backend to Cloud Run (with CORS configured for frontend)
+  # Note: Firebase credentials are optional. If you configure Firebase, create the secret and add to --set-secrets below
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -98,7 +99,7 @@ steps:
       - '--set-env-vars'
       - 'DB_HOST=/cloudsql/$PROJECT_ID:us-east4:inspyre-ping-pong-db,DB_NAME=pingpong,DB_USER=django_user,DEBUG=0,ALLOWED_HOSTS=*,CORS_ALLOWED_ORIGINS=${_FRONTEND_URL},CSRF_TRUSTED_ORIGINS=${_FRONTEND_URL}'
       - '--set-secrets'
-      - 'DB_PASSWORD=django-db-password:latest,SECRET_KEY=django-secret-key:latest,FIREBASE_CREDENTIALS_JSON=firebase-credentials:latest'
+      - 'DB_PASSWORD=django-db-password:latest,SECRET_KEY=django-secret-key:latest'
     id: 'deploy-backend'
     waitFor: ['run-migrations']
 
