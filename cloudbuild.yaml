@@ -65,25 +65,21 @@ steps:
 
   # 5. Run Database Migrations
   - name: 'gcr.io/google-appengine/exec-wrapper'
+    entrypoint: 'bash'
     args:
-      - '-i'
-      - 'us-east4-docker.pkg.dev/$PROJECT_ID/inspyre-ping-pong-repo/backend:$COMMIT_SHA'
-      - '-s'
-      - '$PROJECT_ID:us-east4:inspyre-ping-pong-db'
-      - '-e'
-      - 'DB_HOST=/cloudsql/$PROJECT_ID:us-east4:inspyre-ping-pong-db'
-      - '-e'
-      - 'DB_NAME=postgres'
-      - '-e'
-      - 'DB_USER=django_user'
-      - '--'
-      - 'python'
-      - 'manage.py'
-      - 'migrate'
-      - '--noinput'
+      - '-c'
+      - |
+        /buildstep \
+          -i us-east4-docker.pkg.dev/$PROJECT_ID/inspyre-ping-pong-repo/backend:$COMMIT_SHA \
+          -s $PROJECT_ID:us-east4:inspyre-ping-pong-db \
+          -e DB_HOST=/cloudsql/$PROJECT_ID:us-east4:inspyre-ping-pong-db \
+          -e DB_NAME=postgres \
+          -e DB_USER=django_user \
+          -e DB_PASSWORD=$$DB_PASSWORD \
+          -- python manage.py migrate --noinput
     id: 'run-migrations'
     waitFor: ['push-backend']
-    secretEnv: ['DB_PASSWORD', 'SECRET_KEY']
+    secretEnv: ['DB_PASSWORD']
 
   # 6. Deploy Backend to Cloud Run (with CORS configured for frontend)
   # Note: Firebase credentials are optional. If you configure Firebase, create the secret and add to --set-secrets below
