@@ -37,7 +37,7 @@ export const useAuthStore = defineStore('auth', {
     /**
      * Initialize reCAPTCHA verifier for phone authentication
      */
-    async initRecaptcha(containerId) {
+    async initRecaptcha(containerId, forceReset = false) {
       if (!await this.ensureFirebaseInitialized()) {
         console.log('[DEV] Firebase not configured - reCAPTCHA not initialized')
         return false
@@ -51,14 +51,32 @@ export const useAuthStore = defineStore('auth', {
           return false
         }
 
-        this.recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
-          size: 'invisible',
-          callback: () => console.log('reCAPTCHA solved'),
-          'expired-callback': () => console.log('reCAPTCHA expired')
-        })
+        // Clear existing verifier if force reset or if it exists
+        if (this.recaptchaVerifier && (forceReset || this.recaptchaVerifier.destroyed)) {
+          try {
+            this.recaptchaVerifier.clear()
+          } catch (e) {
+            console.log('Could not clear existing reCAPTCHA:', e)
+          }
+          this.recaptchaVerifier = null
+        }
+
+        // Only create new verifier if we don't have one
+        if (!this.recaptchaVerifier) {
+          this.recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
+            size: 'invisible',
+            callback: () => console.log('reCAPTCHA solved'),
+            'expired-callback': () => {
+              console.log('reCAPTCHA expired, resetting...')
+              this.recaptchaVerifier = null
+            }
+          })
+        }
         return true
       } catch (error) {
         console.error('reCAPTCHA initialization error:', error)
+        // Reset on error
+        this.recaptchaVerifier = null
         return false
       }
     },
@@ -66,10 +84,26 @@ export const useAuthStore = defineStore('auth', {
     /**
      * Send OTP to phone number via Firebase
      */
-    async sendPhoneOTP(phoneNumber) {
+    async sendPhoneOTP(phoneNumber, isResend = false) {
       if (!await this.ensureFirebaseInitialized()) {
         console.log('[DEV] Firebase not configured - skipping phone OTP')
         return { success: true, dev: true }
+      }
+
+      // For resend, we need to reset the reCAPTCHA
+      if (isResend && this.recaptchaVerifier) {
+        console.log('Resetting reCAPTCHA for resend...')
+        try {
+          this.recaptchaVerifier.clear()
+        } catch (e) {
+          console.log('Could not clear reCAPTCHA:', e)
+        }
+        this.recaptchaVerifier = null
+        // Re-initialize with the same container
+        const container = document.getElementById('recaptcha-container')
+        if (container) {
+          await this.initRecaptcha('recaptcha-container', true)
+        }
       }
 
       if (!this.recaptchaVerifier) {
@@ -82,6 +116,10 @@ export const useAuthStore = defineStore('auth', {
         return { success: true }
       } catch (error) {
         console.error('Send OTP error:', error)
+        // If reCAPTCHA error, reset it
+        if (error.code === 'auth/internal-error' || error.message?.includes('reCAPTCHA')) {
+          this.recaptchaVerifier = null
+        }
         throw error
       }
     },
@@ -261,20 +299,27 @@ export const useAuthStore = defineStore('auth', {
     /**
      * Sync verification status from Firebase
      */
-    async syncVerificationStatus() {
+    async syncVerificationStatus(phoneNumber = null) {
       if (!this.firebaseUser) {
         return null
       }
 
       try {
         const idToken = await this.firebaseUser.getIdToken()
-        const response = await axios.post(`${API_URL}/auth/firebase-verify/`, {
+        const payload = {
           firebase_token: idToken
-        })
+        }
+        // Allow updating phone number during verification
+        if (phoneNumber) {
+          payload.phone_number = phoneNumber
+        }
+        
+        const response = await axios.post(`${API_URL}/auth/firebase-verify/`, payload)
 
         if (response.data.user) {
           this.user = response.data.user
           this.isVerified = response.data.user.is_verified
+          this.isApproved = response.data.user.is_approved
           localStorage.setItem('user', JSON.stringify(this.user))
         }
 

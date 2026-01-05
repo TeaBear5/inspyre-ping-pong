@@ -47,21 +47,8 @@ class UserRegistrationView(generics.CreateAPIView):
         import traceback
         try:
             print(f"[REGISTER] Starting registration with data keys: {request.data.keys()}")
-            firebase_token = request.data.get('firebase_token')
-
-            # Verify Firebase token if provided
-            firebase_data = None
-            if firebase_token:
-                print("[REGISTER] Verifying Firebase token...")
-                firebase_data = FirebaseService.verify_id_token(firebase_token)
-                if firebase_data:
-                    print(f"[REGISTER] Firebase token verified for: {firebase_data.get('email') or firebase_data.get('phone_number')}")
-                    # Auto-fill verification status from Firebase
-                    if firebase_data.get('email'):
-                        request.data['email'] = firebase_data.get('email')
-                    if firebase_data.get('phone_number'):
-                        request.data['phone_number'] = firebase_data.get('phone_number')
-
+            
+            # Django-first registration: Create account first, verify later
             print("[REGISTER] Validating serializer...")
             serializer = self.get_serializer(data=request.data)
 
@@ -72,28 +59,30 @@ class UserRegistrationView(generics.CreateAPIView):
             print("[REGISTER] Creating user...")
             user = serializer.save()
             print(f"[REGISTER] User created: {user.username} (id={user.id})")
+            
+            # Check if Firebase token provided for immediate verification
+            firebase_token = request.data.get('firebase_token')
+            if firebase_token:
+                print("[REGISTER] Firebase token provided, attempting to verify...")
+                firebase_data = FirebaseService.verify_id_token(firebase_token)
+                if firebase_data:
+                    print(f"[REGISTER] Firebase token verified for: {firebase_data.get('email') or firebase_data.get('phone_number')}")
+                    user.firebase_uid = firebase_data.get('uid')
+                    if firebase_data.get('email_verified'):
+                        user.email_verified = True
+                    if firebase_data.get('phone_number'):
+                        user.phone_verified = True
+                    user.save()
+                    print(f"[REGISTER] User verification status updated")
 
-            # If Firebase token was verified, mark as verified and auto-approve
-            if firebase_data:
-                user.firebase_uid = firebase_data.get('uid')
-                if firebase_data.get('email_verified'):
-                    user.email_verified = True
-                if firebase_data.get('phone_number'):
-                    user.phone_verified = True
-                # Auto-approve user since they completed Firebase verification
+            # Users can use the app immediately but with limited access until verified
+            # They get full access only after phone/email verification
+            if not FirebaseService.initialize():
+                # Dev mode - Firebase not configured, auto-approve users
+                print(f"[REGISTER] Auto-approving user {user.username} (Firebase not configured)")
                 user.is_approved = True
                 user.approved_at = timezone.now()
-                user.save()
-                print(f"[REGISTER] Firebase verified user {user.username} - auto-approved")
-            elif not FirebaseService.initialize():
-                # Dev mode - Firebase not configured, auto-verify and auto-approve users
-                print(f"[REGISTER] Auto-verifying and approving user {user.username} (Firebase not configured)")
-                if user.verification_method == 'phone':
-                    user.phone_verified = True
-                else:
-                    user.email_verified = True
-                user.is_approved = True
-                user.approved_at = timezone.now()
+                # Don't auto-verify in dev mode - let them test the verification flow
                 user.save()
 
             # Create token for the user
@@ -261,15 +250,18 @@ class LoginView(APIView):
 
 class FirebaseVerificationView(APIView):
     """
-    Sync verification status from Firebase
-
-    Frontend calls this after Firebase verification is complete
-    to update the Django user's verification status
+    Verify phone/email through Firebase after account creation
+    
+    This allows users to:
+    1. Create account first (Django)
+    2. Use basic features immediately
+    3. Verify phone/email later for full access
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request):
         firebase_token = request.data.get('firebase_token')
+        new_phone = request.data.get('phone_number')  # Allow updating phone before verification
 
         if not firebase_token:
             return Response(
@@ -288,25 +280,48 @@ class FirebaseVerificationView(APIView):
         user = request.user
         updated = False
 
-        # Update verification status
+        # Allow phone update if not yet verified and Firebase confirms new number
+        if new_phone and not user.phone_verified:
+            if firebase_data.get('phone_number') == new_phone:
+                user.phone_number = new_phone
+                user.phone_verified = True
+                updated = True
+                print(f"[VERIFY] Updated and verified phone: {new_phone}")
+        elif firebase_data.get('phone_number') and not user.phone_verified:
+            # Verify existing phone
+            if str(user.phone_number) == firebase_data.get('phone_number'):
+                user.phone_verified = True
+                updated = True
+                print(f"[VERIFY] Verified existing phone: {user.phone_number}")
+            else:
+                return Response({
+                    'error': 'Phone number mismatch. Update your profile first.',
+                    'expected': str(user.phone_number),
+                    'received': firebase_data.get('phone_number')
+                }, status=status.HTTP_400_BAD_REQUEST)
+
+        # Update email verification status
         if firebase_data.get('email_verified') and not user.email_verified:
             user.email_verified = True
-            updated = True
-
-        if firebase_data.get('phone_number') and not user.phone_verified:
-            user.phone_verified = True
             updated = True
 
         # Link Firebase UID if not set
         if not user.firebase_uid and firebase_data.get('uid'):
             user.firebase_uid = firebase_data.get('uid')
             updated = True
+        
+        # Auto-approve after verification
+        if not user.is_approved and (user.phone_verified or user.email_verified):
+            user.is_approved = True
+            user.approved_at = timezone.now()
+            updated = True
+            print(f"[VERIFY] Auto-approved user: {user.username}")
 
         if updated:
             user.save()
 
         return Response({
-            'message': 'Verification status synced',
+            'message': 'Verification successful' if updated else 'Already verified',
             'user': UserSerializer(user).data
         })
 
@@ -347,6 +362,26 @@ class UserProfileView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return self.request.user
+    
+    def update(self, request, *args, **kwargs):
+        """Allow users to update their profile, including phone number if not verified"""
+        user = self.get_object()
+        
+        # Allow phone number update only if not verified
+        if 'phone_number' in request.data and user.phone_verified:
+            return Response(
+                {'error': 'Cannot change phone number after verification'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Allow email update only if not verified  
+        if 'email' in request.data and user.email_verified:
+            return Response(
+                {'error': 'Cannot change email after verification'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        return super().update(request, *args, **kwargs)
 
 
 class PlayerProfileViewSet(viewsets.ReadOnlyModelViewSet):
