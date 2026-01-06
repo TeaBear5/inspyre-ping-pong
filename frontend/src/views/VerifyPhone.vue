@@ -119,7 +119,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -135,10 +135,12 @@ const resending = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 
-onMounted(() => {
-  if (firebaseEnabled.value) {
-    authStore.initRecaptcha('verify-recaptcha-container')
-  }
+// reCAPTCHA container ID for this component
+const RECAPTCHA_CONTAINER_ID = 'verify-recaptcha-container'
+
+// Cleanup reCAPTCHA when component unmounts
+onUnmounted(() => {
+  authStore.clearRecaptcha()
 })
 
 const startPhoneVerification = async () => {
@@ -146,7 +148,8 @@ const startPhoneVerification = async () => {
   errorMessage.value = ''
 
   try {
-    await authStore.sendPhoneOTP(authStore.user?.phone_number)
+    // Pass container ID - sendPhoneOTP handles reCAPTCHA initialization
+    await authStore.sendPhoneOTP(authStore.user?.phone_number, RECAPTCHA_CONTAINER_ID)
     otpSent.value = true
     successMessage.value = 'Verification code sent!'
   } catch (error) {
@@ -162,9 +165,8 @@ const resendPhoneCode = async () => {
   otpCode.value = ''
 
   try {
-    // Re-init reCAPTCHA for resend
-    authStore.initRecaptcha('verify-recaptcha-container')
-    await authStore.sendPhoneOTP(authStore.user?.phone_number)
+    // sendPhoneOTP handles reCAPTCHA initialization internally
+    await authStore.sendPhoneOTP(authStore.user?.phone_number, RECAPTCHA_CONTAINER_ID)
     successMessage.value = 'New verification code sent!'
   } catch (error) {
     if (error.code === 'auth/too-many-requests') {

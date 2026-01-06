@@ -15,6 +15,8 @@ export const useAuthStore = defineStore('auth', {
       // Firebase-specific state
       confirmationResult: null,
       recaptchaVerifier: null,
+      recaptchaWidgetId: null,
+      currentRecaptchaContainerId: null,
       firebaseUser: null,
       firebaseInitialized: false
     }
@@ -35,91 +37,120 @@ export const useAuthStore = defineStore('auth', {
     },
 
     /**
-     * Initialize reCAPTCHA verifier for phone authentication
+     * Safely clear existing reCAPTCHA verifier
      */
-    async initRecaptcha(containerId, forceReset = false) {
+    clearRecaptcha() {
+      if (this.recaptchaVerifier) {
+        try {
+          this.recaptchaVerifier.clear()
+        } catch (e) {
+          // Ignore errors during cleanup - verifier may already be destroyed
+          console.log('[reCAPTCHA] Cleanup note:', e.message)
+        }
+        this.recaptchaVerifier = null
+        this.recaptchaWidgetId = null
+      }
+    },
+
+    /**
+     * Initialize reCAPTCHA verifier for phone authentication
+     * This creates a fresh verifier each time it's called
+     */
+    async initRecaptcha(containerId) {
       if (!await this.ensureFirebaseInitialized()) {
         console.log('[DEV] Firebase not configured - reCAPTCHA not initialized')
         return false
       }
 
       try {
-        // Dynamic import after ensuring Firebase is initialized
         const { auth, RecaptchaVerifier } = await import('../firebase')
         if (!auth || !RecaptchaVerifier) {
           console.log('[DEV] Firebase auth not available')
           return false
         }
 
-        // Clear existing verifier if force reset or if it exists
-        if (this.recaptchaVerifier && (forceReset || this.recaptchaVerifier.destroyed)) {
-          try {
-            this.recaptchaVerifier.clear()
-          } catch (e) {
-            console.log('Could not clear existing reCAPTCHA:', e)
-          }
-          this.recaptchaVerifier = null
+        // Always clear any existing verifier first
+        this.clearRecaptcha()
+
+        // Wait a tick for DOM to be ready and any previous cleanup to complete
+        await new Promise(resolve => setTimeout(resolve, 100))
+
+        // Check that the container element exists
+        const container = document.getElementById(containerId)
+        if (!container) {
+          console.error('[reCAPTCHA] Container element not found:', containerId)
+          return false
         }
 
-        // Only create new verifier if we don't have one
-        if (!this.recaptchaVerifier) {
-          this.recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
-            size: 'invisible',
-            callback: () => console.log('reCAPTCHA solved'),
-            'expired-callback': () => {
-              console.log('reCAPTCHA expired, resetting...')
-              this.recaptchaVerifier = null
-            }
-          })
+        // Clear any leftover reCAPTCHA elements in the container
+        container.innerHTML = ''
+
+        // Create fresh verifier
+        this.recaptchaVerifier = new RecaptchaVerifier(auth, containerId, {
+          size: 'invisible',
+          callback: (token) => {
+            console.log('[reCAPTCHA] Solved successfully')
+          },
+          'expired-callback': () => {
+            console.log('[reCAPTCHA] Token expired')
+            // Don't null out verifier here - just let it be re-used
+          },
+          'error-callback': (error) => {
+            console.error('[reCAPTCHA] Error:', error)
+          }
+        })
+
+        // Pre-render the widget to catch any initialization errors early
+        try {
+          this.recaptchaWidgetId = await this.recaptchaVerifier.render()
+          console.log('[reCAPTCHA] Rendered with widget ID:', this.recaptchaWidgetId)
+        } catch (renderError) {
+          console.error('[reCAPTCHA] Render error:', renderError)
+          this.clearRecaptcha()
+          return false
         }
+
+        this.currentRecaptchaContainerId = containerId
         return true
       } catch (error) {
-        console.error('reCAPTCHA initialization error:', error)
-        // Reset on error
-        this.recaptchaVerifier = null
+        console.error('[reCAPTCHA] Initialization error:', error)
+        this.clearRecaptcha()
         return false
       }
     },
 
     /**
      * Send OTP to phone number via Firebase
+     * Automatically handles reCAPTCHA initialization/reset
      */
-    async sendPhoneOTP(phoneNumber, isResend = false) {
+    async sendPhoneOTP(phoneNumber, containerId = null) {
       if (!await this.ensureFirebaseInitialized()) {
         console.log('[DEV] Firebase not configured - skipping phone OTP')
         return { success: true, dev: true }
       }
 
-      // For resend, we need to reset the reCAPTCHA
-      if (isResend && this.recaptchaVerifier) {
-        console.log('Resetting reCAPTCHA for resend...')
-        try {
-          this.recaptchaVerifier.clear()
-        } catch (e) {
-          console.log('Could not clear reCAPTCHA:', e)
-        }
-        this.recaptchaVerifier = null
-        // Re-initialize with the same container
-        const container = document.getElementById('recaptcha-container')
-        if (container) {
-          await this.initRecaptcha('recaptcha-container', true)
-        }
-      }
+      // Determine which container to use
+      const targetContainerId = containerId || this.currentRecaptchaContainerId || 'recaptcha-container'
 
-      if (!this.recaptchaVerifier) {
-        throw new Error('reCAPTCHA not initialized. Call initRecaptcha first.')
+      // Always reinitialize reCAPTCHA for each OTP request
+      // This ensures we have a fresh, valid verifier
+      console.log('[Phone OTP] Initializing fresh reCAPTCHA for:', targetContainerId)
+      const initialized = await this.initRecaptcha(targetContainerId)
+
+      if (!initialized || !this.recaptchaVerifier) {
+        throw new Error('Failed to initialize reCAPTCHA. Please refresh the page and try again.')
       }
 
       try {
         const { auth, signInWithPhoneNumber } = await import('../firebase')
+        console.log('[Phone OTP] Sending verification code to:', phoneNumber)
         this.confirmationResult = await signInWithPhoneNumber(auth, phoneNumber, this.recaptchaVerifier)
+        console.log('[Phone OTP] Verification code sent successfully')
         return { success: true }
       } catch (error) {
-        console.error('Send OTP error:', error)
-        // If reCAPTCHA error, reset it
-        if (error.code === 'auth/internal-error' || error.message?.includes('reCAPTCHA')) {
-          this.recaptchaVerifier = null
-        }
+        console.error('[Phone OTP] Send error:', error)
+        // Clear verifier on error so next attempt starts fresh
+        this.clearRecaptcha()
         throw error
       }
     },

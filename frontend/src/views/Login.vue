@@ -114,7 +114,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -135,6 +135,14 @@ const errors = ref({
   general: ''
 })
 
+// reCAPTCHA container ID for this component
+const RECAPTCHA_CONTAINER_ID = 'recaptcha-container'
+
+// Cleanup reCAPTCHA when component unmounts
+onUnmounted(() => {
+  authStore.clearRecaptcha()
+})
+
 // Detect if input looks like a phone number
 const detectInputType = () => {
   const value = identifier.value.trim()
@@ -152,12 +160,6 @@ const identifierIcon = computed(() => {
   return 'mdi-account'
 })
 
-onMounted(() => {
-  if (firebaseEnabled.value) {
-    authStore.initRecaptcha('recaptcha-container')
-  }
-})
-
 const resetErrors = () => {
   errors.value = {
     identifier: '',
@@ -173,11 +175,7 @@ const resetPhoneLogin = () => {
   identifier.value = ''
   isPhoneNumber.value = false
   resetErrors()
-  if (firebaseEnabled.value) {
-    setTimeout(() => {
-      authStore.initRecaptcha('recaptcha-container')
-    }, 100)
-  }
+  // No need to re-init reCAPTCHA here - sendPhoneOTP will handle it
 }
 
 const formatPhoneNumber = () => {
@@ -195,7 +193,8 @@ const sendOTP = async () => {
   const phone = formatPhoneNumber()
 
   try {
-    await authStore.sendPhoneOTP(phone)
+    // Pass the container ID so reCAPTCHA can be initialized properly
+    await authStore.sendPhoneOTP(phone, RECAPTCHA_CONTAINER_ID)
     otpSent.value = true
   } catch (error) {
     if (error.code === 'auth/invalid-phone-number') {

@@ -130,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -165,11 +165,12 @@ const errors = ref({
   general: ''
 })
 
-// Initialize reCAPTCHA for phone registration
-onMounted(() => {
-  if (firebaseEnabled.value) {
-    authStore.initRecaptcha('register-recaptcha-container')
-  }
+// reCAPTCHA container ID for this component
+const RECAPTCHA_CONTAINER_ID = 'register-recaptcha-container'
+
+// Cleanup reCAPTCHA when component unmounts
+onUnmounted(() => {
+  authStore.clearRecaptcha()
 })
 
 const formatPhoneNumber = () => {
@@ -214,7 +215,8 @@ const handleRegister = async () => {
       setTimeout(() => router.push('/'), 2000)
     } else {
       // Phone registration: Send OTP first
-      await authStore.sendPhoneOTP(formData.value.phone_number)
+      // Pass the container ID so reCAPTCHA can be initialized properly
+      await authStore.sendPhoneOTP(formData.value.phone_number, RECAPTCHA_CONTAINER_ID)
       showPhoneVerification.value = true
     }
   } catch (error) {
@@ -294,8 +296,9 @@ const resendPhoneCode = async () => {
   verificationError.value = ''
 
   try {
-    authStore.initRecaptcha('register-recaptcha-container')
-    await authStore.sendPhoneOTP(formData.value.phone_number)
+    // sendPhoneOTP handles reCAPTCHA initialization internally
+    await authStore.sendPhoneOTP(formData.value.phone_number, RECAPTCHA_CONTAINER_ID)
+    verificationError.value = '' // Clear any previous errors
   } catch (error) {
     verificationError.value = error.message || 'Failed to resend code'
   } finally {
