@@ -11,22 +11,34 @@
             </v-alert>
 
             <v-form @submit.prevent="handleLogin">
-              <!-- Unified identifier field -->
+              <!-- Phone Number field for Firebase mode -->
               <v-text-field
-                v-model="identifier"
-                :label="firebaseEnabled ? 'Phone, Email, or Username' : 'Username, Email, or Phone'"
-                :placeholder="firebaseEnabled ? '+1234567890 or username' : 'Enter your login'"
-                :hint="firebaseEnabled && isPhoneNumber ? 'Phone detected - will send verification code' : ''"
-                :prepend-icon="identifierIcon"
+                v-if="firebaseEnabled"
+                v-model="phoneNumber"
+                label="Phone Number"
+                placeholder="+1234567890"
+                hint="Include country code (e.g., +1 for US)"
+                prepend-icon="mdi-phone"
                 required
-                :error-messages="errors.identifier"
+                :error-messages="errors.phone"
                 :disabled="otpSent"
-                @input="detectInputType"
+                @input="formatPhoneNumber"
               ></v-text-field>
 
-              <!-- Password field (shown for non-phone logins) -->
+              <!-- Username/Email field for dev mode -->
               <v-text-field
-                v-if="!isPhoneLogin || !firebaseEnabled"
+                v-if="!firebaseEnabled"
+                v-model="identifier"
+                label="Username, Email, or Phone"
+                placeholder="Enter your login"
+                prepend-icon="mdi-account"
+                required
+                :error-messages="errors.identifier"
+              ></v-text-field>
+
+              <!-- Password field (dev mode only) -->
+              <v-text-field
+                v-if="!firebaseEnabled"
                 v-model="password"
                 label="Password"
                 type="password"
@@ -37,13 +49,14 @@
 
               <!-- OTP field for phone login -->
               <v-text-field
-                v-if="otpSent && isPhoneLogin && firebaseEnabled"
+                v-if="otpSent && firebaseEnabled"
                 v-model="otpCode"
                 label="Verification Code"
                 placeholder="123456"
                 prepend-icon="mdi-numeric"
                 maxlength="6"
                 :error-messages="errors.otp"
+                @keyup.enter="handleLogin"
               ></v-text-field>
 
               <!-- reCAPTCHA container (invisible) -->
@@ -54,7 +67,7 @@
               </v-alert>
 
               <!-- Phone login has two-step flow -->
-              <template v-if="isPhoneLogin && firebaseEnabled">
+              <template v-if="firebaseEnabled">
                 <v-btn
                   v-if="!otpSent"
                   @click="sendOTP"
@@ -84,10 +97,11 @@
                   block
                   class="mt-2"
                 >
-                  Use different login
+                  Use different number
                 </v-btn>
               </template>
 
+              <!-- Dev mode: simple password login -->
               <v-btn
                 v-else
                 type="submit"
@@ -122,13 +136,14 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const firebaseEnabled = computed(() => authStore.firebaseConfigured)
+const phoneNumber = ref('')
 const identifier = ref('')
 const password = ref('')
 const otpCode = ref('')
 const otpSent = ref(false)
 const loading = ref(false)
-const isPhoneNumber = ref(false)
 const errors = ref({
+  phone: '',
   identifier: '',
   password: '',
   otp: '',
@@ -143,25 +158,9 @@ onUnmounted(() => {
   authStore.clearRecaptcha()
 })
 
-// Detect if input looks like a phone number
-const detectInputType = () => {
-  const value = identifier.value.trim()
-  // Check if it starts with + or is all digits (potential phone)
-  isPhoneNumber.value = /^\+?\d{7,}$/.test(value.replace(/[\s\-\(\)]/g, ''))
-}
-
-// Computed to check if we should use phone login flow
-const isPhoneLogin = computed(() => isPhoneNumber.value && firebaseEnabled.value)
-
-// Dynamic icon based on detected input type
-const identifierIcon = computed(() => {
-  if (isPhoneNumber.value) return 'mdi-phone'
-  if (identifier.value.includes('@')) return 'mdi-email'
-  return 'mdi-account'
-})
-
 const resetErrors = () => {
   errors.value = {
+    phone: '',
     identifier: '',
     password: '',
     otp: '',
@@ -172,14 +171,19 @@ const resetErrors = () => {
 const resetPhoneLogin = () => {
   otpSent.value = false
   otpCode.value = ''
-  identifier.value = ''
-  isPhoneNumber.value = false
+  phoneNumber.value = ''
   resetErrors()
-  // No need to re-init reCAPTCHA here - sendPhoneOTP will handle it
+  authStore.clearRecaptcha()
 }
 
 const formatPhoneNumber = () => {
-  let phone = identifier.value.trim().replace(/[\s\-\(\)]/g, '')
+  if (phoneNumber.value && !phoneNumber.value.startsWith('+')) {
+    phoneNumber.value = '+' + phoneNumber.value.replace(/^\+/, '')
+  }
+}
+
+const getFormattedPhone = () => {
+  let phone = phoneNumber.value.trim().replace(/[\s\-\(\)]/g, '')
   if (phone && !phone.startsWith('+')) {
     phone = '+' + phone
   }
@@ -190,15 +194,14 @@ const sendOTP = async () => {
   loading.value = true
   resetErrors()
 
-  const phone = formatPhoneNumber()
+  const phone = getFormattedPhone()
 
   try {
-    // Pass the container ID so reCAPTCHA can be initialized properly
     await authStore.sendPhoneOTP(phone, RECAPTCHA_CONTAINER_ID)
     otpSent.value = true
   } catch (error) {
     if (error.code === 'auth/invalid-phone-number') {
-      errors.value.identifier = 'Invalid phone number format'
+      errors.value.phone = 'Invalid phone number format'
     } else if (error.code === 'auth/too-many-requests') {
       errors.value.general = 'Too many attempts. Please try again later.'
     } else {
@@ -214,12 +217,12 @@ const handleLogin = async () => {
   resetErrors()
 
   try {
-    if (isPhoneLogin.value && firebaseEnabled.value) {
+    if (firebaseEnabled.value) {
       // Phone OTP login
-      const phone = formatPhoneNumber()
+      const phone = getFormattedPhone()
       await authStore.loginWithPhone(phone, otpCode.value)
     } else {
-      // Password-based login (username, email, or phone with password)
+      // Password-based login (dev mode)
       await authStore.login({
         identifier: identifier.value.trim(),
         password: password.value

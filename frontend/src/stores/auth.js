@@ -183,55 +183,6 @@ export const useAuthStore = defineStore('auth', {
     },
 
     /**
-     * Sign up with email and password via Firebase
-     */
-    async signUpWithEmail(email, password) {
-      if (!await this.ensureFirebaseInitialized()) {
-        console.log('[DEV] Firebase not configured - skipping email signup')
-        return { success: true, dev: true }
-      }
-
-      try {
-        const { auth, createUserWithEmailAndPassword, sendEmailVerification } = await import('../firebase')
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password)
-        await sendEmailVerification(userCredential.user)
-        this.firebaseUser = userCredential.user
-        return {
-          success: true,
-          user: userCredential.user,
-          idToken: await userCredential.user.getIdToken()
-        }
-      } catch (error) {
-        console.error('Email signup error:', error)
-        throw error
-      }
-    },
-
-    /**
-     * Sign in with email and password via Firebase
-     */
-    async signInWithEmail(email, password) {
-      if (!await this.ensureFirebaseInitialized()) {
-        console.log('[DEV] Firebase not configured - skipping email signin')
-        return { success: true, dev: true }
-      }
-
-      try {
-        const { auth, signInWithEmailAndPassword } = await import('../firebase')
-        const userCredential = await signInWithEmailAndPassword(auth, email, password)
-        this.firebaseUser = userCredential.user
-        return {
-          success: true,
-          user: userCredential.user,
-          idToken: await userCredential.user.getIdToken()
-        }
-      } catch (error) {
-        console.error('Email signin error:', error)
-        throw error
-      }
-    },
-
-    /**
      * Get current Firebase ID token
      */
     async getFirebaseIdToken() {
@@ -239,6 +190,39 @@ export const useAuthStore = defineStore('auth', {
         return null
       }
       return await this.firebaseUser.getIdToken()
+    },
+
+    /**
+     * Validate registration data with backend BEFORE sending OTP
+     * This checks username/phone availability without creating a user
+     */
+    async validateRegistration(userData) {
+      try {
+        const response = await axios.post(`${API_URL}/auth/validate-registration/`, userData)
+        return { valid: true }
+      } catch (error) {
+        console.error('Validation error:', error.response)
+        throw error.response?.data || { error: 'Validation failed' }
+      }
+    },
+
+    /**
+     * Cleanup Firebase auth state after a failed registration
+     * This signs out from Firebase to prevent orphaned sessions
+     */
+    async cleanupFirebaseAuth() {
+      if (this.firebaseUser) {
+        try {
+          const { auth } = await import('../firebase')
+          if (auth) {
+            await auth.signOut()
+          }
+        } catch (error) {
+          console.error('Firebase cleanup error:', error)
+        }
+        this.firebaseUser = null
+      }
+      this.confirmationResult = null
     },
 
     /**
@@ -312,18 +296,6 @@ export const useAuthStore = defineStore('auth', {
       return await this.login({
         phone_number: phoneNumber,
         firebase_token: firebaseResult.idToken
-      })
-    },
-
-    /**
-     * Login with Firebase email/password
-     */
-    async loginWithEmail(email, password) {
-      const firebaseResult = await this.signInWithEmail(email, password)
-
-      return await this.login({
-        email: email,
-        firebase_token: firebaseResult.dev ? undefined : firebaseResult.idToken
       })
     },
 

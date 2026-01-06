@@ -3,7 +3,7 @@
     <v-row justify="center">
       <v-col cols="12" sm="8" md="6" lg="4">
         <v-card>
-          <v-card-title class="text-h5">Account Verification</v-card-title>
+          <v-card-title class="text-h5">Phone Verification</v-card-title>
           <v-card-text>
             <!-- Dev mode notice -->
             <v-alert v-if="!firebaseEnabled" type="info" class="mb-4">
@@ -11,7 +11,7 @@
               <p class="mb-0">Verification is not required in development mode. Your account is automatically active.</p>
             </v-alert>
 
-            <!-- Firebase enabled - show verification options -->
+            <!-- Firebase enabled - show verification -->
             <template v-else>
               <v-alert v-if="authStore.isVerified" type="success" class="mb-4">
                 <strong>Already Verified!</strong>
@@ -20,14 +20,14 @@
 
               <template v-else>
                 <p class="mb-4">
-                  Your account needs verification. Please complete one of the following:
+                  Your phone number needs verification to access all features.
                 </p>
 
-                <!-- Phone verification option -->
+                <!-- Phone verification -->
                 <v-card variant="outlined" class="mb-4" v-if="authStore.user?.phone_number">
                   <v-card-title class="text-subtitle-1">
                     <v-icon class="mr-2">mdi-phone</v-icon>
-                    Phone Verification
+                    Verify Your Phone
                   </v-card-title>
                   <v-card-text>
                     <p class="text-grey mb-2">Phone: {{ authStore.user?.phone_number }}</p>
@@ -70,28 +70,9 @@
                   </v-card-text>
                 </v-card>
 
-                <!-- Email verification option -->
-                <v-card variant="outlined" class="mb-4" v-if="authStore.user?.email">
-                  <v-card-title class="text-subtitle-1">
-                    <v-icon class="mr-2">mdi-email</v-icon>
-                    Email Verification
-                  </v-card-title>
-                  <v-card-text>
-                    <p class="text-grey mb-2">Email: {{ authStore.user?.email }}</p>
-                    <p class="text-body-2">
-                      Check your email inbox for a verification link from Firebase.
-                      Click the link to verify your email address.
-                    </p>
-                    <v-btn
-                      color="primary"
-                      variant="outlined"
-                      @click="resendEmailVerification"
-                      :loading="resending"
-                    >
-                      Resend Verification Email
-                    </v-btn>
-                  </v-card-text>
-                </v-card>
+                <v-alert v-if="!authStore.user?.phone_number" type="warning" class="mb-4">
+                  No phone number on file. Please update your profile to add a phone number.
+                </v-alert>
 
                 <v-alert v-if="errorMessage" type="error" class="mt-4">
                   {{ errorMessage }}
@@ -131,7 +112,6 @@ const otpSent = ref(false)
 const otpCode = ref('')
 const sendingOtp = ref(false)
 const verifying = ref(false)
-const resending = ref(false)
 const errorMessage = ref('')
 const successMessage = ref('')
 
@@ -199,19 +179,6 @@ const verifyOtp = async () => {
     }
   } finally {
     verifying.value = false
-  }
-}
-
-const resendEmailVerification = async () => {
-  resending.value = true
-  errorMessage.value = ''
-
-  try {
-    successMessage.value = 'Please check your email for the verification link. If you did not receive it, try logging out and registering again.'
-  } catch (error) {
-    errorMessage.value = error.message || 'Failed to resend verification email'
-  } finally {
-    resending.value = false
   }
 }
 </script>

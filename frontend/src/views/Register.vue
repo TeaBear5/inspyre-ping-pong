@@ -11,7 +11,7 @@
             </v-alert>
 
             <v-form @submit.prevent="handleRegister">
-              <!-- Phone Number (required when Firebase enabled) -->
+              <!-- Phone Number (required for verification) -->
               <v-text-field
                 v-model="formData.phone_number"
                 :label="firebaseEnabled ? 'Phone Number' : 'Phone Number (optional)'"
@@ -21,15 +21,6 @@
                 :required="firebaseEnabled"
                 :error-messages="errors.phone_number"
                 @input="formatPhoneNumber"
-              ></v-text-field>
-
-              <!-- Email (optional) -->
-              <v-text-field
-                v-model="formData.email"
-                label="Email (optional)"
-                type="email"
-                prepend-icon="mdi-email"
-                :error-messages="errors.email"
               ></v-text-field>
 
               <v-text-field
@@ -115,6 +106,7 @@
               </v-alert>
             </v-card-text>
             <v-card-actions>
+              <v-btn @click="cancelVerification" variant="text">Cancel</v-btn>
               <v-btn @click="resendPhoneCode" :loading="resending">Resend Code</v-btn>
               <v-spacer></v-spacer>
               <v-btn color="primary" @click="handlePhoneVerification" :loading="verifying">
@@ -130,7 +122,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onUnmounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -142,7 +134,6 @@ const formData = ref({
   phone_number: '',
   username: '',
   display_name: '',
-  email: '',
   password: '',
   password_confirm: ''
 })
@@ -159,7 +150,6 @@ const errors = ref({
   phone_number: '',
   username: '',
   display_name: '',
-  email: '',
   password: '',
   password_confirm: '',
   general: ''
@@ -184,12 +174,36 @@ const resetErrors = () => {
     phone_number: '',
     username: '',
     display_name: '',
-    email: '',
     password: '',
     password_confirm: '',
     general: ''
   }
   verificationError.value = ''
+}
+
+// Helper to extract error message from backend response
+const extractErrorMessage = (error) => {
+  if (!error) return 'An error occurred'
+
+  // If it's a string, return it
+  if (typeof error === 'string') return error
+
+  // Check for common error properties
+  if (error.error) return error.error
+  if (error.detail) return error.detail
+  if (error.message) return error.message
+
+  // Check for field-specific errors and combine them
+  const fieldErrors = []
+  for (const [key, value] of Object.entries(error)) {
+    if (key !== 'error' && key !== 'detail' && key !== 'message') {
+      const msg = Array.isArray(value) ? value[0] : value
+      if (msg) fieldErrors.push(`${key}: ${msg}`)
+    }
+  }
+  if (fieldErrors.length > 0) return fieldErrors.join(', ')
+
+  return 'An error occurred'
 }
 
 const handleRegister = async () => {
@@ -214,8 +228,16 @@ const handleRegister = async () => {
       successMessage.value = 'Registration successful!'
       setTimeout(() => router.push('/'), 2000)
     } else {
-      // Phone registration: Send OTP first
-      // Pass the container ID so reCAPTCHA can be initialized properly
+      // Step 1: Validate registration data with backend FIRST
+      // This checks username/phone availability before we even touch Firebase
+      console.log('[Register] Validating registration data with backend...')
+      await authStore.validateRegistration({
+        ...formData.value,
+        verification_method: 'phone'
+      })
+      console.log('[Register] Validation passed, sending OTP...')
+
+      // Step 2: Only send OTP after validation passes
       await authStore.sendPhoneOTP(formData.value.phone_number, RECAPTCHA_CONTAINER_ID)
       showPhoneVerification.value = true
     }
@@ -223,18 +245,10 @@ const handleRegister = async () => {
     console.error('Registration error:', error)
 
     if (error.code) {
+      // Firebase error
       switch (error.code) {
         case 'auth/invalid-phone-number':
           errors.value.phone_number = 'Invalid phone number format'
-          break
-        case 'auth/email-already-in-use':
-          errors.value.email = 'Email already in use'
-          break
-        case 'auth/weak-password':
-          errors.value.password = 'Password is too weak. Use at least 6 characters.'
-          break
-        case 'auth/invalid-email':
-          errors.value.email = 'Invalid email format'
           break
         case 'auth/too-many-requests':
           errors.value.general = 'Too many attempts. Please try again later.'
@@ -243,6 +257,7 @@ const handleRegister = async () => {
           errors.value.general = error.message || 'Registration failed'
       }
     } else if (error) {
+      // Backend validation error - show field-specific errors
       const data = error
       Object.keys(data).forEach(key => {
         if (errors.value.hasOwnProperty(key)) {
@@ -266,25 +281,48 @@ const handlePhoneVerification = async () => {
   verificationError.value = ''
 
   try {
+    // Step 1: Verify the OTP with Firebase
+    console.log('[Register] Verifying OTP with Firebase...')
     const result = await authStore.verifyPhoneOTP(verificationCode.value)
-    await authStore.register({
-      ...formData.value,
-      verification_method: 'phone',
-      firebase_token: result.idToken
-    })
+    console.log('[Register] Firebase verification successful, registering with backend...')
 
-    showPhoneVerification.value = false
-    successMessage.value = 'Registration successful! You can now use the app.'
-    setTimeout(() => router.push('/'), 2000)
-  } catch (error) {
-    console.error('Verification error:', error)
+    // Step 2: Register with the backend
+    try {
+      await authStore.register({
+        ...formData.value,
+        verification_method: 'phone',
+        firebase_token: result.idToken
+      })
 
-    if (error.code === 'auth/invalid-verification-code') {
+      showPhoneVerification.value = false
+      successMessage.value = 'Registration successful! You can now use the app.'
+      setTimeout(() => router.push('/'), 2000)
+    } catch (backendError) {
+      console.error('[Register] Backend registration failed:', backendError)
+
+      // Cleanup Firebase session since backend registration failed
+      // This handles the edge case where username was taken between validation and registration
+      console.log('[Register] Cleaning up Firebase session...')
+      await authStore.cleanupFirebaseAuth()
+
+      // Close the dialog and show the error on the main form
+      // This allows user to fix the issue (e.g., change username) and try again
+      showPhoneVerification.value = false
+      verificationCode.value = ''
+
+      // Show the error on the main form
+      const errorMsg = extractErrorMessage(backendError)
+      errors.value.general = errorMsg
+    }
+  } catch (firebaseError) {
+    console.error('[Register] Firebase verification failed:', firebaseError)
+
+    if (firebaseError.code === 'auth/invalid-verification-code') {
       verificationError.value = 'Invalid verification code'
-    } else if (error.code === 'auth/code-expired') {
+    } else if (firebaseError.code === 'auth/code-expired') {
       verificationError.value = 'Code expired. Please request a new one.'
     } else {
-      verificationError.value = error.error || error.message || 'Verification failed'
+      verificationError.value = firebaseError.message || 'Verification failed'
     }
   } finally {
     verifying.value = false
@@ -304,5 +342,13 @@ const resendPhoneCode = async () => {
   } finally {
     resending.value = false
   }
+}
+
+const cancelVerification = () => {
+  showPhoneVerification.value = false
+  verificationCode.value = ''
+  verificationError.value = ''
+  // Clear reCAPTCHA to allow fresh attempt
+  authStore.clearRecaptcha()
 }
 </script>

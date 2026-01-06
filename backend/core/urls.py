@@ -5,10 +5,10 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    UserRegistrationView, LoginView, PhoneVerificationView, FirebaseVerificationView,
-    ResendVerificationView, UserProfileView, PlayerProfileViewSet, GameViewSet,
-    TournamentViewSet, NotificationViewSet, RankingsView, StatsView, AdminUserViewSet,
-    ApprovedPlayersView
+    ValidateRegistrationView, UserRegistrationView, LoginView, PhoneVerificationView,
+    FirebaseVerificationView, ResendVerificationView, UserProfileView, PlayerProfileViewSet,
+    GameViewSet, TournamentViewSet, NotificationViewSet, RankingsView, StatsView,
+    AdminUserViewSet, ApprovedPlayersView
 )
 
 # Create a router and register viewsets
@@ -21,6 +21,7 @@ router.register(r'admin/users', AdminUserViewSet, basename='admin-users')
 
 urlpatterns = [
     # Authentication and user management
+    path('auth/validate-registration/', ValidateRegistrationView.as_view(), name='validate-registration'),
     path('auth/register/', UserRegistrationView.as_view(), name='register'),
     path('auth/login/', LoginView.as_view(), name='login'),
     path('auth/verify-phone/', PhoneVerificationView.as_view(), name='verify-phone'),

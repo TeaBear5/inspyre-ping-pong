@@ -31,14 +31,36 @@ class IsApprovedUser(permissions.BasePermission):
         return request.user.is_authenticated and request.user.is_approved
 
 
+class ValidateRegistrationView(APIView):
+    """
+    Validate registration data BEFORE sending OTP
+
+    This endpoint checks if username and phone are available without creating a user.
+    Frontend should call this before initiating Firebase phone verification.
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        from .serializers import UserRegistrationSerializer
+
+        # Run validation without saving
+        serializer = UserRegistrationSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({'valid': True, 'message': 'Registration data is valid'})
+
+
 class UserRegistrationView(generics.CreateAPIView):
     """
     Register a new user with Firebase authentication
 
     Flow:
-    1. Frontend authenticates with Firebase (phone or email)
-    2. Frontend sends Firebase ID token + user details to this endpoint
-    3. Backend verifies token, creates Django user, returns Django token
+    1. Frontend validates data with /auth/validate-registration/
+    2. Frontend authenticates with Firebase (phone OTP)
+    3. Frontend sends Firebase ID token + user details to this endpoint
+    4. Backend verifies token, creates Django user, returns Django token
     """
     serializer_class = UserRegistrationSerializer
     permission_classes = [permissions.AllowAny]

@@ -10,15 +10,12 @@ from .models import (
 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
-    """Serializer for user registration"""
+    """Serializer for user registration - phone verification only"""
     phone_number = PhoneNumberField(required=False, allow_null=True, allow_blank=True)
     email = serializers.EmailField(required=False, allow_null=True, allow_blank=True)
     password = serializers.CharField(write_only=True, min_length=8)
     password_confirm = serializers.CharField(write_only=True)
-    verification_method = serializers.ChoiceField(
-        choices=['phone', 'email'],
-        default='phone'
-    )
+    verification_method = serializers.CharField(default='phone', required=False)
 
     class Meta:
         model = User
@@ -56,14 +53,12 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         from .services import FirebaseService
         firebase_configured = FirebaseService.initialize()
 
-        verification_method = data.get('verification_method', 'phone')
+        # Always use phone verification
+        data['verification_method'] = 'phone'
 
-        # Only enforce verification method requirements if Firebase is configured
-        if firebase_configured:
-            if verification_method == 'phone' and not data.get('phone_number'):
-                raise serializers.ValidationError({"phone_number": "Phone number is required for phone verification"})
-            if verification_method == 'email' and not data.get('email'):
-                raise serializers.ValidationError({"email": "Email is required for email verification"})
+        # Only enforce phone number requirement if Firebase is configured
+        if firebase_configured and not data.get('phone_number'):
+            raise serializers.ValidationError({"phone_number": "Phone number is required"})
 
         return data
 
