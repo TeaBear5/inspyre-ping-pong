@@ -75,16 +75,7 @@ class UserRegistrationView(generics.CreateAPIView):
                     user.save()
                     print(f"[REGISTER] User verification status updated")
 
-            # Users can use the app immediately but with limited access until verified
-            # They get full access only after phone/email verification
-            if not FirebaseService.initialize():
-                # Dev mode - Firebase not configured, auto-approve users
-                print(f"[REGISTER] Auto-approving user {user.username} (Firebase not configured)")
-                user.is_approved = True
-                user.approved_at = timezone.now()
-                # Don't auto-verify in dev mode - let them test the verification flow
-                user.save()
-
+            # Users start approved by default - admins can revoke access if needed
             # Create token for the user
             print("[REGISTER] Creating auth token...")
             token, created = Token.objects.get_or_create(user=user)
@@ -176,11 +167,6 @@ class LoginView(APIView):
                 updated = True
             if phone and not user.phone_verified:
                 user.phone_verified = True
-                updated = True
-            # Auto-approve user if they're verified but not yet approved
-            if not user.is_approved and (user.phone_verified or user.email_verified):
-                user.is_approved = True
-                user.approved_at = timezone.now()
                 updated = True
             if updated:
                 user.save()
@@ -310,13 +296,6 @@ class FirebaseVerificationView(APIView):
             user.firebase_uid = firebase_data.get('uid')
             updated = True
         
-        # Auto-approve after verification
-        if not user.is_approved and (user.phone_verified or user.email_verified):
-            user.is_approved = True
-            user.approved_at = timezone.now()
-            updated = True
-            print(f"[VERIFY] Auto-approved user: {user.username}")
-
         if updated:
             user.save()
 
@@ -788,7 +767,7 @@ class AdminUserViewSet(viewsets.ModelViewSet):
             if field in request.data:
                 update_data[field] = request.data[field]
 
-        # Track approval
+        # Track who approved
         if 'is_approved' in update_data and update_data['is_approved']:
             update_data['approved_by'] = request.user
             update_data['approved_at'] = timezone.now()

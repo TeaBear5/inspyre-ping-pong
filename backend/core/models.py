@@ -26,8 +26,8 @@ class User(AbstractUser):
     bio = models.TextField(max_length=500, blank=True)
     avatar = models.ImageField(upload_to='avatars/', null=True, blank=True)
 
-    # Admin approval system
-    is_approved = models.BooleanField(default=False)
+    # Admin approval system - users start approved, admins can revoke
+    is_approved = models.BooleanField(default=True)
     approved_by = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_users')
     approved_at = models.DateTimeField(null=True, blank=True)
 
