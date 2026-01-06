@@ -5,59 +5,77 @@
         <v-card>
           <v-card-title class="text-h5">Login</v-card-title>
           <v-card-text>
+            <!-- Login method toggle -->
+            <v-btn-toggle
+              v-model="loginMethod"
+              mandatory
+              color="primary"
+              class="mb-4 d-flex"
+              density="comfortable"
+            >
+              <v-btn value="phone" :disabled="!firebaseEnabled" class="flex-grow-1">
+                <v-icon start>mdi-phone</v-icon>
+                Phone
+              </v-btn>
+              <v-btn value="password" class="flex-grow-1">
+                <v-icon start>mdi-lock</v-icon>
+                Password
+              </v-btn>
+            </v-btn-toggle>
+
             <!-- Dev mode notice -->
-            <v-alert v-if="!firebaseEnabled" type="info" variant="tonal" class="mb-4" density="compact">
-              Development mode - use username + password
+            <v-alert v-if="!firebaseEnabled && loginMethod === 'phone'" type="warning" variant="tonal" class="mb-4" density="compact">
+              Phone login requires Firebase configuration
             </v-alert>
 
             <v-form @submit.prevent="handleLogin">
-              <!-- Phone Number field for Firebase mode -->
-              <v-text-field
-                v-if="firebaseEnabled"
-                v-model="phoneNumber"
-                label="Phone Number"
-                placeholder="+1234567890"
-                hint="Include country code (e.g., +1 for US)"
-                prepend-icon="mdi-phone"
-                required
-                :error-messages="errors.phone"
-                :disabled="otpSent"
-                @input="formatPhoneNumber"
-              ></v-text-field>
+              <!-- Phone Number field for phone login -->
+              <template v-if="loginMethod === 'phone' && firebaseEnabled">
+                <v-text-field
+                  v-model="phoneNumber"
+                  label="Phone Number"
+                  placeholder="+1234567890"
+                  hint="Include country code (e.g., +1 for US)"
+                  prepend-icon="mdi-phone"
+                  required
+                  :error-messages="errors.phone"
+                  :disabled="otpSent"
+                  @input="formatPhoneNumber"
+                ></v-text-field>
 
-              <!-- Username/Email field for dev mode -->
-              <v-text-field
-                v-if="!firebaseEnabled"
-                v-model="identifier"
-                label="Username, Email, or Phone"
-                placeholder="Enter your login"
-                prepend-icon="mdi-account"
-                required
-                :error-messages="errors.identifier"
-              ></v-text-field>
+                <!-- OTP field for phone login -->
+                <v-text-field
+                  v-if="otpSent"
+                  v-model="otpCode"
+                  label="Verification Code"
+                  placeholder="123456"
+                  prepend-icon="mdi-numeric"
+                  maxlength="6"
+                  :error-messages="errors.otp"
+                  @keyup.enter="handleLogin"
+                ></v-text-field>
+              </template>
 
-              <!-- Password field (dev mode only) -->
-              <v-text-field
-                v-if="!firebaseEnabled"
-                v-model="password"
-                label="Password"
-                type="password"
-                prepend-icon="mdi-lock"
-                required
-                :error-messages="errors.password"
-              ></v-text-field>
+              <!-- Username/Password fields -->
+              <template v-if="loginMethod === 'password'">
+                <v-text-field
+                  v-model="identifier"
+                  label="Username, Email, or Phone"
+                  placeholder="Enter your login"
+                  prepend-icon="mdi-account"
+                  required
+                  :error-messages="errors.identifier"
+                ></v-text-field>
 
-              <!-- OTP field for phone login -->
-              <v-text-field
-                v-if="otpSent && firebaseEnabled"
-                v-model="otpCode"
-                label="Verification Code"
-                placeholder="123456"
-                prepend-icon="mdi-numeric"
-                maxlength="6"
-                :error-messages="errors.otp"
-                @keyup.enter="handleLogin"
-              ></v-text-field>
+                <v-text-field
+                  v-model="password"
+                  label="Password"
+                  type="password"
+                  prepend-icon="mdi-lock"
+                  required
+                  :error-messages="errors.password"
+                ></v-text-field>
+              </template>
 
               <!-- reCAPTCHA container (invisible) -->
               <div id="recaptcha-container"></div>
@@ -66,8 +84,8 @@
                 {{ errors.general }}
               </v-alert>
 
-              <!-- Phone login has two-step flow -->
-              <template v-if="firebaseEnabled">
+              <!-- Phone login buttons -->
+              <template v-if="loginMethod === 'phone' && firebaseEnabled">
                 <v-btn
                   v-if="!otpSent"
                   @click="sendOTP"
@@ -101,9 +119,9 @@
                 </v-btn>
               </template>
 
-              <!-- Dev mode: simple password login -->
+              <!-- Password login button -->
               <v-btn
-                v-else
+                v-if="loginMethod === 'password'"
                 type="submit"
                 color="primary"
                 block
@@ -128,7 +146,7 @@
 </template>
 
 <script setup>
-import { ref, onUnmounted, computed } from 'vue'
+import { ref, onUnmounted, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
@@ -136,6 +154,10 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 const firebaseEnabled = computed(() => authStore.firebaseConfigured)
+
+// Default to password login if Firebase is not configured, otherwise phone
+const loginMethod = ref(firebaseEnabled.value ? 'phone' : 'password')
+
 const phoneNumber = ref('')
 const identifier = ref('')
 const password = ref('')
@@ -152,6 +174,14 @@ const errors = ref({
 
 // reCAPTCHA container ID for this component
 const RECAPTCHA_CONTAINER_ID = 'recaptcha-container'
+
+// Reset state when switching login methods
+watch(loginMethod, () => {
+  resetErrors()
+  otpSent.value = false
+  otpCode.value = ''
+  authStore.clearRecaptcha()
+})
 
 // Cleanup reCAPTCHA when component unmounts
 onUnmounted(() => {
@@ -217,12 +247,12 @@ const handleLogin = async () => {
   resetErrors()
 
   try {
-    if (firebaseEnabled.value) {
+    if (loginMethod.value === 'phone' && firebaseEnabled.value) {
       // Phone OTP login
       const phone = getFormattedPhone()
       await authStore.loginWithPhone(phone, otpCode.value)
     } else {
-      // Password-based login (dev mode)
+      // Password-based login
       await authStore.login({
         identifier: identifier.value.trim(),
         password: password.value

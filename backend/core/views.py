@@ -43,12 +43,16 @@ class ValidateRegistrationView(APIView):
     def post(self, request):
         from .serializers import UserRegistrationSerializer
 
+        print(f"[VALIDATE] Validating registration data: username={request.data.get('username')}, phone={request.data.get('phone_number')}")
+
         # Run validation without saving
         serializer = UserRegistrationSerializer(data=request.data)
 
         if not serializer.is_valid():
+            print(f"[VALIDATE] Validation FAILED: {serializer.errors}")
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
+        print(f"[VALIDATE] Validation PASSED for username={request.data.get('username')}")
         return Response({'valid': True, 'message': 'Registration data is valid'})
 
 

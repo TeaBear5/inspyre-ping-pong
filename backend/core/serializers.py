@@ -23,7 +23,9 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
 
     def validate_username(self, value):
         """Check if username already exists"""
-        if User.objects.filter(username=value).exists():
+        exists = User.objects.filter(username=value).exists()
+        print(f"[VALIDATE] Checking username '{value}': exists={exists}")
+        if exists:
             raise serializers.ValidationError("This username is already taken.")
         return value
 
@@ -32,8 +34,14 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         # Convert empty string to None
         if value == '':
             return None
-        if value and User.objects.filter(phone_number=value).exists():
-            raise serializers.ValidationError("An account with this phone number already exists.")
+        if value:
+            # Convert to E.164 format string for consistent database comparison
+            import phonenumbers
+            phone_e164 = phonenumbers.format_number(value, phonenumbers.PhoneNumberFormat.E164)
+            exists = User.objects.filter(phone_number=phone_e164).exists()
+            print(f"[VALIDATE] Checking phone '{phone_e164}': exists={exists}")
+            if exists:
+                raise serializers.ValidationError("An account with this phone number already exists.")
         return value
 
     def validate_email(self, value):
